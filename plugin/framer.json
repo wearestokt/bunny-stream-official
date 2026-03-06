@@ -1,0 +1,9 @@
+{
+  "id": "bunstr",
+  "name": "Bunny Stream Player",
+  "modes": [
+    "canvas",
+    "code"
+  ],
+  "icon": "/icon.svg"
+}

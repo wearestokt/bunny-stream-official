@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="420" viewBox="0 0 320 420" fill="none">
+  <!-- Background -->
+  <rect width="320" height="420" rx="12" fill="#1a1a1a"/>
+  
+  <!-- Content area -->
+  <g transform="translate(16, 16)">
+    <!-- Title -->
+    <text x="0" y="24" font-family="Geist Mono, monospace" font-size="16" font-weight="600" fill="#ffffff">Bunny Stream Video Player</text>
+    
+    <!-- List items -->
+    <g transform="translate(0, 48)">
+      <!-- BunnyVideoPlayer -->
+      <g class="list-item" transform="translate(0, 0)">
+        <rect width="288" height="36" x="0" y="0" rx="6" fill="#2a2a2a"/>
+        <g transform="translate(12, 10)" stroke="#ffffff" fill="none" stroke-width="1.5"><polygon points="6,4 6,20 14,16 22,20 22,4 14,8" stroke-linejoin="round"/></g>
+        <text x="40" y="24" font-family="Geist Pixel, monospace" font-size="12" fill="#b0b0b0">BunnyVideoPlayer</text>
+      </g>
+      
+      <!-- BunnyPlayPauseButton -->
+      <g class="list-item" transform="translate(0, 40)">
+        <rect width="288" height="36" x="0" y="0" rx="6" fill="#2a2a2a"/>
+        <g transform="translate(12, 10)" stroke="#ffffff" fill="none" stroke-width="1.5"><polygon points="8,6 8,18 18,12" stroke-linejoin="round"/></g>
+        <text x="40" y="24" font-family="Geist Pixel, monospace" font-size="12" fill="#b0b0b0">BunnyPlayPauseButton</text>
+      </g>
+      
+      <!-- BunnyVolumeSlider -->
+      <g class="list-item" transform="translate(0, 80)">
+        <rect width="288" height="36" x="0" y="0" rx="6" fill="#2a2a2a"/>
+        <g transform="translate(12, 10)" stroke="#ffffff" fill="none" stroke-width="1.5"><polygon points="11,8 6,12 6,12 11,16 11,8"/><path d="M14 10a4 4 0 0 1 0 4M17 8a7 7 0 0 1 0 8" stroke-linecap="round"/></g>
+        <text x="40" y="24" font-family="Geist Pixel, monospace" font-size="12" fill="#b0b0b0">BunnyVolumeSlider</text>
+      </g>
+      
+      <!-- BunnyProgressBar -->
+      <g class="list-item" transform="translate(0, 120)">
+        <rect width="288" height="36" x="0" y="0" rx="6" fill="#2a2a2a"/>
+        <g transform="translate(12, 10)" stroke="#ffffff" fill="none" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2" stroke-linecap="round"/></g>
+        <text x="40" y="24" font-family="Geist Pixel, monospace" font-size="12" fill="#b0b0b0">BunnyProgressBar</text>
+      </g>
+      
+      <!-- BunnyTimeDisplay -->
+      <g class="list-item" transform="translate(0, 160)">
+        <rect width="288" height="36" x="0" y="0" rx="6" fill="#2a2a2a"/>
+        <g transform="translate(12, 10)" stroke="#ffffff" fill="none" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3" stroke-linecap="round"/></g>
+        <text x="40" y="24" font-family="Geist Pixel, monospace" font-size="12" fill="#b0b0b0">BunnyTimeDisplay</text>
+      </g>
+      
+      <!-- BunnyQualityPickerButton -->
+      <g class="list-item" transform="translate(0, 200)">
+        <rect width="288" height="36" x="0" y="0" rx="6" fill="#2a2a2a"/>
+        <g transform="translate(12, 10)" stroke="#ffffff" fill="none" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 4v2M12 18v2M4 12h2M18 12h2M6.34 6.34l1.42 1.42M16.24 16.24l1.42 1.42M6.34 17.66l1.42-1.42M16.24 7.76l1.42-1.42" stroke-linecap="round"/></g>
+        <text x="40" y="24" font-family="Geist Pixel, monospace" font-size="12" fill="#b0b0b0">BunnyQualityPickerButton</text>
+      </g>
+      
+      <!-- BunnyFullscreenButton -->
+      <g class="list-item" transform="translate(0, 240)">
+        <rect width="288" height="36" x="0" y="0" rx="6" fill="#2a2a2a"/>
+        <g transform="translate(12, 10)" stroke="#ffffff" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/></g>
+        <text x="40" y="24" font-family="Geist Pixel, monospace" font-size="12" fill="#b0b0b0">BunnyFullscreenButton</text>
+      </g>
+    </g>
+  </g>
+</svg>

@@ -1,6 +1,6 @@
 import { addPropertyControls, ControlType } from "framer"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useBunnyVideoStore, reportControlHover } from "./BunnyVideoStore.tsx"
+import { useBunnyVideoStore, reportControlHover, useBunnyVideoHoverRef } from "./BunnyVideoStore.tsx"
 
 const DEFAULT_PROGRESS_GRADIENT =
     "linear-gradient(90deg,rgba(255, 255, 237, 1) 0%, rgba(230, 114, 32, 1) 60%, rgba(255, 64, 0, 1) 100%)"
@@ -74,9 +74,11 @@ export function BunnyProgressBar(props: {
         thumbIcon = "",
         thumbShadow = "0 0 0 2px rgba(0,0,0,0.2)",
     } = playheadConfig
-    const { style } = props
-    const [store, setStore] = useBunnyVideoStore()
-    const onControlHover = (isHovering: boolean) => reportControlHover(isHovering, setStore)
+    const { style, storeId = "default" } = props
+    const [store, setStore] = useBunnyVideoStore(storeId)
+    const hoverLeaveTimeoutRef = useBunnyVideoHoverRef(storeId)
+    const onControlHover = (isHovering: boolean) =>
+        reportControlHover(isHovering, setStore, hoverLeaveTimeoutRef)
     const [isDragging, setIsDragging] = useState(false)
     const [dragPercent, setDragPercent] = useState<number | null>(null)
     const wasPlayingRef = useRef(false)
@@ -156,9 +158,14 @@ export function BunnyProgressBar(props: {
         ? (progressGradientTrimmed || DEFAULT_PROGRESS_GRADIENT)
         : progressColor
     const bufferBg = toTrackColor(bufferColor, 0.5)
-    const trackRadius = trackRadiusProp ?? trackHeight / 2
-    const resolvedThumbSize = Math.max(8, thumbSize)
-    const containerHeight = Math.max(trackHeight, resolvedThumbSize)
+    // Framer Number controls may pass strings; React only adds "px" for numeric style values.
+    const resolvedTrackHeight = Math.max(2, Math.min(24, Number(trackHeight) || 6))
+    const resolvedThumbSize = Math.max(8, Math.min(40, Number(thumbSize) || 8))
+    const resolvedTrackRadius =
+        trackRadiusProp == null || trackRadiusProp === ""
+            ? resolvedTrackHeight / 2
+            : Math.max(0, Number(trackRadiusProp) || 0)
+    const containerHeight = Math.max(resolvedTrackHeight, resolvedThumbSize)
 
     const resolvedThumbShadow = thumbIcon ? "none" : thumbShadow
 
@@ -191,10 +198,10 @@ export function BunnyProgressBar(props: {
                     position: "absolute",
                     left: 0,
                     right: 0,
-                    top: (containerHeight - trackHeight) / 2,
-                    height: trackHeight,
+                    top: (containerHeight - resolvedTrackHeight) / 2,
+                    height: resolvedTrackHeight,
                     background: trackBg,
-                    borderRadius: trackRadius,
+                    borderRadius: resolvedTrackRadius,
                     overflow: "hidden",
                 }}
             >
@@ -207,7 +214,7 @@ export function BunnyProgressBar(props: {
                             width: `${bufferPercent}%`,
                             height: "100%",
                             background: bufferBg,
-                            borderRadius: trackRadius,
+                            borderRadius: resolvedTrackRadius,
                             pointerEvents: "none",
                         }}
                     />
@@ -222,8 +229,8 @@ export function BunnyProgressBar(props: {
                         ...(useProgressGradient
                             ? { backgroundImage: progressBg }
                             : { background: progressBg }),
-                        borderRadius: trackRadius,
-                        transition: isDragging ? "none" : "width 0.1s",
+                        borderRadius: resolvedTrackRadius,
+                        /* No width transition: progress is driven at rAF while playing; easing looked laggy. */
                         pointerEvents: "none",
                     }}
                 />
@@ -267,6 +274,12 @@ BunnyProgressBar.defaultProps = {
 }
 
 addPropertyControls(BunnyProgressBar, {
+    storeId: {
+        type: ControlType.String,
+        title: "Store ID",
+        defaultValue: "default",
+        description: "Must match BunnyVideoPlayer.",
+    },
     track: {
         type: ControlType.Object,
         title: "Track Settings",

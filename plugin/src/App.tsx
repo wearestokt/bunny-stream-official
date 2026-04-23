@@ -1,4 +1,4 @@
-import { framer } from "framer-plugin"
+import { framer, isCodeFileComponentExport } from "framer-plugin"
 import {
     Clock,
     Fullscreen,
@@ -11,10 +11,10 @@ import {
 import React, { useCallback, useEffect, useRef } from "react"
 import { Item, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { COMPONENT_FILES } from "./componentSources"
-import "./App.css"
+import { COMPONENT_FILES } from "./componentSources.ts"
 
-const DROPPABLE_FILES = COMPONENT_FILES.filter((f) => f.name !== "BunnyVideoStore.tsx")
+const NOT_DRAGGABLE = new Set(["BunnyVideoStore.tsx"])
+const DROPPABLE_FILES = COMPONENT_FILES.filter((f) => !NOT_DRAGGABLE.has(f.name))
 
 const DISPLAY_NAMES: Record<string, string> = {
     "BunnyVideoPlayer.tsx": "Video Player",
@@ -65,10 +65,7 @@ export function App() {
             const map: Record<string, string> = {}
             for (const file of updated) {
                 const baseName = file.name.replace(".tsx", "")
-                const compExport = file.exports.find(
-                    (e): e is { type: "component"; insertURL: string } =>
-                        e.type === "component" && "insertURL" in e && !!e.insertURL
-                )
+                const compExport = file.exports?.find(isCodeFileComponentExport)
                 if (compExport?.insertURL) {
                     map[baseName] = compExport.insertURL
                 }

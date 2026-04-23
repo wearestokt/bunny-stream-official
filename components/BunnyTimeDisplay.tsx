@@ -1,5 +1,5 @@
 import { addPropertyControls, ControlType } from "framer"
-import { useBunnyVideoStore, reportControlHover } from "./BunnyVideoStore.tsx"
+import { useBunnyVideoStore, reportControlHover, useBunnyVideoHoverRef } from "./BunnyVideoStore.tsx"
 
 type FormatType =
     | "currentSlashDuration"
@@ -32,13 +32,16 @@ export function BunnyTimeDisplay(props: {
     style?: React.CSSProperties
 }) {
     const {
+        storeId = "default",
         format = "currentSlashDuration",
         font = {},
         color = "#ffffff",
         style,
     } = props
-    const [store, setStore] = useBunnyVideoStore()
-    const onControlHover = (isHovering: boolean) => reportControlHover(isHovering, setStore)
+    const [store, setStore] = useBunnyVideoStore(storeId)
+    const hoverLeaveTimeoutRef = useBunnyVideoHoverRef(storeId)
+    const onControlHover = (isHovering: boolean) =>
+        reportControlHover(isHovering, setStore, hoverLeaveTimeoutRef)
 
     const current = formatTime(store.currentTime)
     const duration = formatTime(store.duration)
@@ -98,6 +101,12 @@ BunnyTimeDisplay.defaultProps = {
 }
 
 addPropertyControls(BunnyTimeDisplay, {
+    storeId: {
+        type: ControlType.String,
+        title: "Store ID",
+        defaultValue: "default",
+        description: "Must match BunnyVideoPlayer.",
+    },
     format: {
         type: ControlType.Enum,
         title: "Format",

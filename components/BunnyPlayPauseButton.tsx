@@ -1,5 +1,5 @@
 import { addPropertyControls, ControlType } from "framer"
-import { useBunnyVideoStore, reportControlHover } from "./BunnyVideoStore.tsx"
+import { useBunnyVideoStore, reportControlHover, useBunnyVideoHoverRef } from "./BunnyVideoStore.tsx"
 
 function parsePadding(value: string | undefined): { top: number; right: number; bottom: number; left: number } {
     if (!value || typeof value !== "string") return { top: 0, right: 0, bottom: 0, left: 0 }
@@ -107,6 +107,7 @@ export function BunnyPlayPauseButton(props: {
     style?: React.CSSProperties
 }) {
     const {
+        storeId = "default",
         playIconStyle = "default",
         pauseIconStyle = "default",
         iconStrokeWidth = 2,
@@ -119,11 +120,14 @@ export function BunnyPlayPauseButton(props: {
         style,
     } = props
 
-    const resolvedIconSize = Math.max(8, Math.min(64, iconSize ?? 24))
+    const resolvedIconSize = Math.max(8, Math.min(64, Number(iconSize) || 24))
+    const resolvedStrokeWidth = Math.max(0.5, Math.min(4, Number(iconStrokeWidth) || 2))
     const pad = parsePadding(padding)
     const resolvedPadding = padding ?? "0px"
-    const [store, setStore] = useBunnyVideoStore()
-    const onControlHover = (isHovering: boolean) => reportControlHover(isHovering, setStore)
+    const [store, setStore] = useBunnyVideoStore(storeId)
+    const hoverLeaveTimeoutRef = useBunnyVideoHoverRef(storeId)
+    const onControlHover = (isHovering: boolean) =>
+        reportControlHover(isHovering, setStore, hoverLeaveTimeoutRef)
 
     const isPlaying = store.play
 
@@ -149,7 +153,7 @@ export function BunnyPlayPauseButton(props: {
                     preserveAspectRatio="xMidYMid meet"
                     style={{ width: resolvedIconSize, height: resolvedIconSize, flexShrink: 0, color: pauseIconColor }}
                 >
-                    {renderPauseIcon(pauseIconStyle, iconStrokeWidth)}
+                    {renderPauseIcon(pauseIconStyle, resolvedStrokeWidth)}
                 </svg>
             )
         }
@@ -163,7 +167,7 @@ export function BunnyPlayPauseButton(props: {
                 preserveAspectRatio="xMidYMid meet"
                 style={{ width: resolvedIconSize, height: resolvedIconSize, flexShrink: 0, color: playIconColor }}
             >
-                {renderPlayIcon(playIconStyle, iconStrokeWidth)}
+                {renderPlayIcon(playIconStyle, resolvedStrokeWidth)}
             </svg>
         )
     }
@@ -209,6 +213,12 @@ BunnyPlayPauseButton.defaultProps = {
 }
 
 addPropertyControls(BunnyPlayPauseButton, {
+    storeId: {
+        type: ControlType.String,
+        title: "Store ID",
+        defaultValue: "default",
+        description: "Must match BunnyVideoPlayer.",
+    },
     playIconStyle: {
         type: ControlType.Enum,
         title: "Play Icon",

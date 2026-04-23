@@ -1,7 +1,7 @@
-import { addPropertyControls, ControlType } from "framer"
+import { addPropertyControls, ControlType, RenderTarget } from "framer"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { useBunnyVideoStore, reportControlHover } from "./BunnyVideoStore.tsx"
+import { useBunnyVideoStore, reportControlHover, useBunnyVideoHoverRef } from "./BunnyVideoStore.tsx"
 
 function parsePadding(value: string | undefined): { top: number; right: number; bottom: number; left: number } {
     if (!value || typeof value !== "string") return { top: 0, right: 0, bottom: 0, left: 0 }
@@ -34,6 +34,57 @@ function renderCogIcon(style: IconStyle, strokeWidth: number) {
 }
 
 type PopupBorder = { width?: number; color?: string; opacity?: number } | undefined
+
+type PopupPlacement = "up" | "down" | "left" | "right"
+
+function getPopupFixedStyle(
+    buttonRect: DOMRect,
+    placement: PopupPlacement,
+    gapPx: number
+): React.CSSProperties {
+    const g = Math.max(0, gapPx)
+    const innerW = window.innerWidth
+    const innerH = window.innerHeight
+    const base: React.CSSProperties = { position: "fixed", zIndex: 1000 }
+
+    switch (placement) {
+        case "up":
+            return {
+                ...base,
+                left: buttonRect.left + buttonRect.width / 2,
+                bottom: innerH - buttonRect.top + g,
+                transform: "translateX(-50%)",
+            }
+        case "down":
+            return {
+                ...base,
+                left: buttonRect.left + buttonRect.width / 2,
+                top: buttonRect.bottom + g,
+                transform: "translateX(-50%)",
+            }
+        case "left":
+            return {
+                ...base,
+                right: innerW - buttonRect.left + g,
+                top: buttonRect.top + buttonRect.height / 2,
+                transform: "translateY(-50%)",
+            }
+        case "right":
+            return {
+                ...base,
+                left: buttonRect.right + g,
+                top: buttonRect.top + buttonRect.height / 2,
+                transform: "translateY(-50%)",
+            }
+        default:
+            return {
+                ...base,
+                left: buttonRect.left + buttonRect.width / 2,
+                top: buttonRect.bottom + g,
+                transform: "translateX(-50%)",
+            }
+    }
+}
 
 function colorWithOpacity(c: string | undefined, o: number): string {
     if (!c) return "transparent"
@@ -68,6 +119,10 @@ export function BunnyQualityPickerButton(props: {
         icon?: string
     }
     popup?: {
+        /** Where the menu opens relative to the button (fixed to viewport). */
+        placement?: PopupPlacement
+        /** Space between the button edge and the popup, in px. */
+        gap?: number
         padding?: string
         backgroundColor?: string
         radius?: number
@@ -79,9 +134,22 @@ export function BunnyQualityPickerButton(props: {
         radius?: number
         backgroundColor?: string
         hoverBackgroundColor?: string
+        /** Default row text color (not hovered, not current quality). */
+        defaultTextColor?: string
+        /** Row text color while hovered. */
+        hoverTextColor?: string
+        /** Text color for the row that matches the current quality (store). */
+        selectedTextColor?: string
         border?: PopupBorder
         checkIcon?: string
+        /** Vertical space between quality rows, in px. */
+        gap?: number
     }
+    /**
+     * Framer canvas only: when on, the quality menu stays open so you can style it in the property panel
+     * (colors, padding, placement). No effect in in-app Preview or the published site.
+     */
+    previewPopupOnCanvas?: boolean
     style?: React.CSSProperties
 }) {
     const iconBtn = props.iconButton ?? {}
@@ -96,6 +164,8 @@ export function BunnyQualityPickerButton(props: {
 
     const popupConfig = props.popup ?? {}
     const {
+        placement: popupPlacement = "down",
+        gap: popupGap = 8,
         padding: popupPadding = "8px 12px",
         backgroundColor: popupBackgroundColor = "rgba(28, 28, 28, 0.95)",
         radius: popupRadius = 8,
@@ -109,47 +179,71 @@ export function BunnyQualityPickerButton(props: {
         radius: itemRadius = 0,
         backgroundColor: itemBackgroundColor = "transparent",
         hoverBackgroundColor: itemHoverBackgroundColor = "rgba(255,255,255,0.1)",
+        defaultTextColor = "#ffffff",
+        hoverTextColor = "#ffffff",
+        selectedTextColor = "#ffffff",
         border: itemBorder,
         checkIcon: popupCheckIcon,
+        gap: itemGap = 0,
     } = itemsConfig
 
-    const { style } = props
+    const { style, storeId = "default", previewPopupOnCanvas = false } = props
 
-    const resolvedIconSize = Math.max(8, Math.min(64, iconSize ?? 24))
+    const isCanvas = RenderTarget.current() === RenderTarget.canvas
+    const resolvedIconSize = Math.max(8, Math.min(64, Number(iconSize) || 24))
+    const resolvedStrokeWidth = Math.max(0.5, Math.min(4, Number(iconStrokeWidth) || 2))
+    const resolvedPopupRadius = (() => {
+        const n = Number(popupRadius)
+        return Number.isFinite(n) ? Math.max(0, n) : 8
+    })()
+    const resolvedItemRadius = (() => {
+        const n = Number(itemRadius)
+        return Number.isFinite(n) ? Math.max(0, n) : 0
+    })()
     const pad = parsePadding(padding)
     const popupPad = parsePadding(popupPadding)
     const resolvedPadding = padding ?? "0px"
-    const [store, setStore] = useBunnyVideoStore()
-    const onControlHover = (isHovering: boolean) => reportControlHover(isHovering, setStore)
+    const [store, setStore] = useBunnyVideoStore(storeId)
+    const hoverLeaveTimeoutRef = useBunnyVideoHoverRef(storeId)
+    const onControlHover = (isHovering: boolean) =>
+        reportControlHover(isHovering, setStore, hoverLeaveTimeoutRef)
     const [popupOpen, setPopupOpen] = useState(false)
-    const [popupRect, setPopupRect] = useState<{ left: number; bottom: number } | null>(null)
+    const [popupFixedStyle, setPopupFixedStyle] = useState<React.CSSProperties | null>(null)
+    const resolvedPopupGap = Math.max(0, Math.min(48, Number(popupGap) || 0))
+    const resolvedItemGap = Math.max(0, Math.min(48, Number(itemGap) || 0))
+    const [hoveredItemIndex, setHoveredItemIndex] = useState<number | null>(null)
     const buttonRef = useRef<HTMLDivElement>(null)
     const popupRef = useRef<HTMLDivElement>(null)
+
+    const designShowPopup = isCanvas && previewPopupOnCanvas
+    const showPopup = designShowPopup || popupOpen
 
     const options = ["Auto", ...store.qualities]
 
     useLayoutEffect(() => {
-        if (!popupOpen || !buttonRef.current) return
-        const updateRect = () => {
+        if (!showPopup || !buttonRef.current) return
+        const updatePosition = () => {
             if (buttonRef.current) {
                 const r = buttonRef.current.getBoundingClientRect()
-                setPopupRect({
-                    left: r.left + r.width / 2,
-                    bottom: window.innerHeight - r.bottom + 4,
-                })
+                setPopupFixedStyle(getPopupFixedStyle(r, popupPlacement, resolvedPopupGap))
             }
         }
-        updateRect()
-        window.addEventListener("scroll", updateRect, true)
-        window.addEventListener("resize", updateRect)
+        updatePosition()
+        window.addEventListener("scroll", updatePosition, true)
+        window.addEventListener("resize", updatePosition)
         return () => {
-            window.removeEventListener("scroll", updateRect, true)
-            window.removeEventListener("resize", updateRect)
+            window.removeEventListener("scroll", updatePosition, true)
+            window.removeEventListener("resize", updatePosition)
         }
-    }, [popupOpen])
+    }, [showPopup, popupPlacement, resolvedPopupGap])
 
     useEffect(() => {
-        if (!popupOpen) return
+        if (!showPopup) setHoveredItemIndex(null)
+    }, [showPopup])
+
+    useEffect(() => {
+        if (designShowPopup) return
+        if (!showPopup) return
         const handleDocClick = (e: MouseEvent) => {
             const target = e.target as Node
             if (
@@ -170,7 +264,7 @@ export function BunnyQualityPickerButton(props: {
             document.removeEventListener("mousedown", handleDocClick)
             document.removeEventListener("keydown", handleKeyDown)
         }
-    }, [popupOpen])
+    }, [showPopup, designShowPopup])
 
     const handleButtonClick = (e: React.MouseEvent) => {
         e.stopPropagation()
@@ -180,6 +274,12 @@ export function BunnyQualityPickerButton(props: {
     const handleOptionClick = (index: number) => {
         setStore({ qualityToSet: index })
         setPopupOpen(false)
+    }
+
+    const itemTextColor = (index: number) => {
+        if (hoveredItemIndex === index) return hoverTextColor
+        if (store.quality === index) return selectedTextColor
+        return defaultTextColor
     }
 
     const iconStyleCss: React.CSSProperties = {
@@ -199,7 +299,7 @@ export function BunnyQualityPickerButton(props: {
                 preserveAspectRatio="xMidYMid meet"
                 style={{ width: resolvedIconSize, height: resolvedIconSize, flexShrink: 0, color: iconColor }}
             >
-                {renderCogIcon(iconStyle, iconStrokeWidth)}
+                {renderCogIcon(iconStyle, resolvedStrokeWidth)}
             </svg>
         )
     }
@@ -229,28 +329,25 @@ export function BunnyQualityPickerButton(props: {
             onMouseLeave={() => onControlHover(false)}
         >
             {renderIcon()}
-            {popupOpen &&
-                popupRect &&
+            {showPopup &&
+                popupFixedStyle &&
                 typeof document !== "undefined" &&
                 createPortal(
                     <div
                     ref={popupRef}
                     data-bunny-control
                     style={{
-                        position: "fixed",
-                        left: popupRect.left,
-                        bottom: popupRect.bottom,
-                        transform: "translateX(-50%)",
+                        ...popupFixedStyle,
                         background: popupBackgroundColor,
-                        borderRadius: popupRadius,
+                        borderRadius: resolvedPopupRadius,
                         boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
                         minWidth: 120,
                         overflow: "visible",
                         zIndex: 1000,
                         padding: `${popupPad.top}px ${popupPad.right}px ${popupPad.bottom}px ${popupPad.left}px`,
                         border:
-                            popupBorder?.width != null && popupBorder.width > 0
-                                ? `${popupBorder.width}px solid ${(() => {
+                            Number(popupBorder?.width) > 0
+                                ? `${Number(popupBorder.width)}px solid ${(() => {
                                       const c = popupBorder.color ?? "#ffffff"
                                       const o = popupBorder.opacity ?? 1
                                       const rgbaMatch = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[\d.]+)?\)/)
@@ -268,7 +365,13 @@ export function BunnyQualityPickerButton(props: {
                                 : undefined,
                     }}
                 >
-                    <div>
+                    <div
+                        style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: resolvedItemGap,
+                        }}
+                    >
                         {options.map((label, i) => (
                             <button
                                 key={i}
@@ -284,22 +387,19 @@ export function BunnyQualityPickerButton(props: {
                                     width: "100%",
                                     padding: itemPadding ?? "10px 14px",
                                     border:
-                                        itemBorder?.width != null && itemBorder.width > 0
-                                            ? `${itemBorder.width}px solid ${colorWithOpacity(itemBorder.color ?? "#ffffff", itemBorder.opacity ?? 1)}`
+                                        Number(itemBorder?.width) > 0
+                                            ? `${Number(itemBorder.width)}px solid ${colorWithOpacity(itemBorder.color ?? "#ffffff", itemBorder.opacity ?? 1)}`
                                             : "none",
-                                    background: itemBackgroundColor,
-                                    borderRadius: itemRadius,
-                                    color: "#fff",
+                                    background:
+                                        hoveredItemIndex === i ? itemHoverBackgroundColor : itemBackgroundColor,
+                                    borderRadius: resolvedItemRadius,
                                     cursor: "pointer",
                                     textAlign: "left",
                                     ...itemFont,
+                                    color: itemTextColor(i),
                                 }}
-                                onMouseEnter={(e) => {
-                                    e.currentTarget.style.background = itemHoverBackgroundColor
-                                }}
-                                onMouseLeave={(e) => {
-                                    e.currentTarget.style.background = itemBackgroundColor
-                                }}
+                                onMouseEnter={() => setHoveredItemIndex(i)}
+                                onMouseLeave={() => setHoveredItemIndex(null)}
                             >
                                 <span>{typeof label === "string" ? label : `Quality ${i}`}</span>
                                 {store.quality === i &&
@@ -311,7 +411,7 @@ export function BunnyQualityPickerButton(props: {
                                             style={{ width: 16, height: 16, marginLeft: 8, flexShrink: 0 }}
                                         />
                                     ) : (
-                                        <span style={{ marginLeft: 8, color: "#fff" }} aria-hidden>
+                                        <span style={{ marginLeft: 8, color: "inherit" }} aria-hidden>
                                             ✓
                                         </span>
                                     ))}
@@ -327,9 +427,25 @@ export function BunnyQualityPickerButton(props: {
 
 BunnyQualityPickerButton.defaultProps = {
     storeId: "default",
+    previewPopupOnCanvas: false,
 }
 
 addPropertyControls(BunnyQualityPickerButton, {
+    storeId: {
+        type: ControlType.String,
+        title: "Store ID",
+        defaultValue: "default",
+        description: "Must match BunnyVideoPlayer.",
+    },
+    previewPopupOnCanvas: {
+        type: ControlType.Boolean,
+        title: "Preview menu on canvas",
+        enabledTitle: "On",
+        disabledTitle: "Off",
+        defaultValue: false,
+        description:
+            "Framer canvas only: keeps the quality menu open so you can tune popup/row settings. In Preview and on the published site this does nothing. Turn off when finished editing.",
+    },
     iconButton: {
         type: ControlType.Object,
         title: "Icon / Button",
@@ -380,8 +496,26 @@ addPropertyControls(BunnyQualityPickerButton, {
     popup: {
         type: ControlType.Object,
         title: "Popup",
-        description: "Background, padding, radius, and border for the quality menu.",
+        description: "Placement, gap, background, padding, radius, and border for the quality menu.",
         controls: {
+            placement: {
+                type: ControlType.Enum,
+                title: "Position",
+                options: ["up", "down", "left", "right"],
+                optionTitles: ["Up", "Down", "Left", "Right"],
+                defaultValue: "down",
+                description: "Where the menu opens relative to the button.",
+            },
+            gap: {
+                type: ControlType.Number,
+                title: "Gap",
+                min: 0,
+                max: 48,
+                step: 1,
+                unit: "px",
+                defaultValue: 8,
+                description: "Space between the button and the popup (like volume slider margin).",
+            },
             padding: {
                 type: ControlType.Padding,
                 title: "Padding",
@@ -431,7 +565,8 @@ addPropertyControls(BunnyQualityPickerButton, {
     items: {
         type: ControlType.Object,
         title: "Items",
-        description: "Font, padding, radius, background, border, and check icon for each quality option (Auto, 240p, etc.).",
+        description:
+            "Font, padding, gap between rows, radius, backgrounds, text colors (default / hover / selected), border, and check icon for each quality option.",
         controls: {
             font: {
                 type: ControlType.Font,
@@ -451,6 +586,16 @@ addPropertyControls(BunnyQualityPickerButton, {
                 title: "Padding",
                 defaultValue: "10px 14px",
             },
+            gap: {
+                type: ControlType.Number,
+                title: "Gap",
+                min: 0,
+                max: 48,
+                step: 1,
+                unit: "px",
+                defaultValue: 0,
+                description: "Space between each quality option row.",
+            },
             radius: {
                 type: ControlType.Number,
                 title: "Radius",
@@ -469,6 +614,21 @@ addPropertyControls(BunnyQualityPickerButton, {
                 type: ControlType.Color,
                 title: "Hover Background",
                 defaultValue: "rgba(255,255,255,0.1)",
+            },
+            defaultTextColor: {
+                type: ControlType.Color,
+                title: "Text — Default",
+                defaultValue: "#ffffff",
+            },
+            hoverTextColor: {
+                type: ControlType.Color,
+                title: "Text — Hover",
+                defaultValue: "#ffffff",
+            },
+            selectedTextColor: {
+                type: ControlType.Color,
+                title: "Text — Selected",
+                defaultValue: "#ffffff",
             },
             checkIcon: {
                 type: ControlType.Image,

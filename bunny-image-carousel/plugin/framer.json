@@ -1,0 +1,6 @@
+{
+  "id": "bunimgcar",
+  "name": "Bunny Image Carousel",
+  "modes": ["canvas", "code"],
+  "icon": "/icon.svg"
+}

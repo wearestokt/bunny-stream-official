@@ -1,6 +1,6 @@
 import { addPropertyControls, ControlType } from "framer"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useBunnyVideoStore, reportControlHover } from "./BunnyVideoStore.tsx"
+import { useBunnyVideoStore, reportControlHover, useBunnyVideoHoverRef } from "./BunnyVideoStore.tsx"
 
 function parsePadding(value: string | undefined): { top: number; right: number; bottom: number; left: number } {
     if (!value || typeof value !== "string") return { top: 0, right: 0, bottom: 0, left: 0 }
@@ -106,6 +106,7 @@ export function BunnyVolumeSlider(props: {
     style?: React.CSSProperties
 }) {
     const {
+        storeId = "default",
         muteIconStyle = "default",
         unmuteIconStyle = "default",
         iconStrokeWidth = 2,
@@ -133,10 +134,17 @@ export function BunnyVolumeSlider(props: {
         thumbShadow = "0 0 0 2px rgba(0,0,0,0.2)",
     } = props
 
+    // Framer Number controls may pass strings; React only adds "px" for numeric style values.
+    const resolvedSliderThickness = Math.max(2, Math.min(24, Number(sliderThickness) || 6))
     const resolvedStrokeWidth = Math.max(0.5, Math.min(4, Number(iconStrokeWidth) || 2))
-    const resolvedSliderRadius = sliderRadiusProp ?? sliderThickness / 2
-    const resolvedThumbSize = Math.max(8, thumbSize)
-    const containerHeight = Math.max(sliderThickness, resolvedThumbSize)
+    const resolvedSliderRadius =
+        sliderRadiusProp == null || sliderRadiusProp === ""
+            ? resolvedSliderThickness / 2
+            : Math.max(0, Number(sliderRadiusProp) || 0)
+    const resolvedThumbSize = Math.max(8, Math.min(40, Number(thumbSize) || 8))
+    const resolvedMin = Number(min) || 0
+    const resolvedMax = Number(max) || 100
+    const containerHeight = Math.max(resolvedSliderThickness, resolvedThumbSize)
     const resolvedThumbShadow = thumbIcon ? "none" : thumbShadow
 
     const progressGradientRaw = typeof progressGradient === "string" ? progressGradient : ""
@@ -153,29 +161,37 @@ export function BunnyVolumeSlider(props: {
         : progressBg
 
     const { style } = props
-    const [store, setStore] = useBunnyVideoStore()
-    const onControlHover = (isHovering: boolean) => reportControlHover(isHovering, setStore)
+    const [store, setStore] = useBunnyVideoStore(storeId)
+    const hoverLeaveTimeoutRef = useBunnyVideoHoverRef(storeId)
+    const onControlHover = (isHovering: boolean) =>
+        reportControlHover(isHovering, setStore, hoverLeaveTimeoutRef)
     const [isMobile, setIsMobile] = useState(false)
     const [isHovering, setIsHovering] = useState(false)
     const [isDragging, setIsDragging] = useState(false)
     const [dragPercent, setDragPercent] = useState<number | null>(null)
     const sliderRef = useRef<HTMLDivElement>(null)
 
-    const volumePercent = ((store.volume - min) / (max - min)) * 100
+    // Must match store.muted from BunnyVideoPlayer — muted prop alone does not zero volume in the store.
+    const effectiveVolume =
+        store.muted || store.volume <= 0 ? 0 : store.volume
+    const volumePercent =
+        resolvedMax === resolvedMin
+            ? 0
+            : ((effectiveVolume - resolvedMin) / (resolvedMax - resolvedMin)) * 100
     const displayPercent = isDragging && dragPercent != null ? dragPercent : volumePercent
+    const showMuteIcon = store.muted || store.volume <= 0
 
     const sliderVisible = volumeSlider && (isMobile || isHovering || isDragging)
-    const resolvedSliderLength = Math.max(40, Math.min(200, sliderLength ?? 80))
+    const resolvedSliderLength = Math.max(40, Math.min(200, Number(sliderLength) || 80))
     const thumbHalf = resolvedThumbSize / 2
     const thumbRange = Math.max(0, resolvedSliderLength)
     const sliderContainerWidth = resolvedSliderLength + resolvedThumbSize
     const sliderContainerHeight = containerHeight + resolvedThumbSize
     const thumbLeftPx = thumbHalf + (displayPercent / 100) * thumbRange
 
-    const showMuteIcon = store.volume <= 0
-
     useEffect(() => {
-        const mq = window.matchMedia(`(max-width: ${mobileBreakpoint}px)`)
+        const bp = Number(mobileBreakpoint) || 768
+        const mq = window.matchMedia(`(max-width: ${bp}px)`)
         const handler = () => setIsMobile(mq.matches)
         handler()
         mq.addEventListener("change", handler)
@@ -203,11 +219,11 @@ export function BunnyVolumeSlider(props: {
 
     const setVolumeFromPercent = useCallback(
         (pct: number) => {
-            const v = min + (pct / 100) * (max - min)
+            const v = resolvedMin + (pct / 100) * (resolvedMax - resolvedMin)
             const vol = Math.round(v)
             setStore({ volume: vol, muted: vol <= 0 })
         },
-        [min, max, setStore]
+        [resolvedMin, resolvedMax, setStore]
     )
 
     const handlePointerDown = useCallback(
@@ -251,15 +267,18 @@ export function BunnyVolumeSlider(props: {
     }, [isDragging, handlePointerMove, handlePointerUp])
 
     const handleMuteClick = () => {
-        if (store.volume <= 0) {
-            const restore = Math.max(min, Math.min(max, store.volumeBeforeMute ?? min))
-            setStore({ muted: false, volume: restore > 0 ? restore : Math.max(1, min) })
+        if (store.muted || store.volume <= 0) {
+            const restoreFrom =
+                store.volumeBeforeMute ??
+                (store.volume > 0 ? store.volume : 100)
+            const restore = Math.max(resolvedMin, Math.min(resolvedMax, restoreFrom))
+            setStore({ muted: false, volume: restore > 0 ? restore : Math.max(1, resolvedMin) })
         } else {
             setStore({ muted: true, volume: 0, volumeBeforeMute: store.volume })
         }
     }
 
-    const resolvedIconSize = Math.max(8, Math.min(64, iconSize ?? 24))
+    const resolvedIconSize = Math.max(8, Math.min(64, Number(iconSize) || 24))
     const pad = parsePadding(padding)
     const resolvedPadding = padding ?? "0px"
 
@@ -309,7 +328,7 @@ export function BunnyVolumeSlider(props: {
         </button>
     )
 
-    const sliderGap = Math.max(0, iconSliderMargin ?? 8)
+    const sliderGap = Math.max(0, Number(iconSliderMargin) || 8)
     const sliderMargin = sliderVisible
         ? {
             left: { marginRight: sliderGap, marginLeft: thumbHalf },
@@ -334,11 +353,11 @@ export function BunnyVolumeSlider(props: {
             onMouseEnter={() => !isMobile && setIsHovering(true)}
             style={{
                 position: "relative",
-                width: isVertical ? sliderThickness + resolvedThumbSize : sliderContainerWidth,
+                width: isVertical ? resolvedSliderThickness + resolvedThumbSize : sliderContainerWidth,
                 height: isVertical ? sliderContainerWidth : sliderContainerHeight,
                 minWidth: 0,
                 minHeight: 0,
-                maxWidth: isVertical ? sliderThickness + resolvedThumbSize : (sliderVisible ? sliderContainerWidth : 0),
+                maxWidth: isVertical ? resolvedSliderThickness + resolvedThumbSize : (sliderVisible ? sliderContainerWidth : 0),
                 maxHeight: isVertical ? (sliderVisible ? sliderContainerWidth : 0) : sliderContainerHeight,
                 opacity: sliderVisible ? 1 : 0,
                 cursor: sliderVisible ? "pointer" : "default",
@@ -359,8 +378,13 @@ export function BunnyVolumeSlider(props: {
                 style={{
                     position: "absolute",
                     ...(isVertical
-                        ? { left: thumbHalf, top: thumbHalf, bottom: thumbHalf, width: sliderThickness }
-                        : { left: thumbHalf, right: thumbHalf, top: (sliderContainerHeight - sliderThickness) / 2, height: sliderThickness }),
+                        ? { left: thumbHalf, top: thumbHalf, bottom: thumbHalf, width: resolvedSliderThickness }
+                        : {
+                              left: thumbHalf,
+                              right: thumbHalf,
+                              top: (sliderContainerHeight - resolvedSliderThickness) / 2,
+                              height: resolvedSliderThickness,
+                          }),
                     background: sliderColor,
                     borderRadius: resolvedSliderRadius,
                     overflow: "hidden",
@@ -475,6 +499,12 @@ export function BunnyVolumeSlider(props: {
 BunnyVolumeSlider.defaultProps = { storeId: "default" }
 
 addPropertyControls(BunnyVolumeSlider, {
+    storeId: {
+        type: ControlType.String,
+        title: "Store ID",
+        defaultValue: "default",
+        description: "Must match BunnyVideoPlayer.",
+    },
     muteIconStyle: {
         type: ControlType.Enum,
         title: "Mute Icon",

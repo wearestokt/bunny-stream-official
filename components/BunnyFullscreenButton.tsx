@@ -1,5 +1,5 @@
 import { addPropertyControls, ControlType } from "framer"
-import { useBunnyVideoStore, reportControlHover } from "./BunnyVideoStore.tsx"
+import { useBunnyVideoStore, reportControlHover, useBunnyVideoHoverRef } from "./BunnyVideoStore.tsx"
 
 function parsePadding(value: string | undefined): { top: number; right: number; bottom: number; left: number } {
     if (!value || typeof value !== "string") return { top: 0, right: 0, bottom: 0, left: 0 }
@@ -39,6 +39,7 @@ export function BunnyFullscreenButton(props: {
     style?: React.CSSProperties
 }) {
     const {
+        storeId = "default",
         iconColor = "#ffffff",
         expandIcon = "",
         exitIcon = "",
@@ -47,11 +48,13 @@ export function BunnyFullscreenButton(props: {
         style,
     } = props
 
-    const resolvedIconSize = Math.max(8, Math.min(64, iconSize ?? 24))
+    const resolvedIconSize = Math.max(8, Math.min(64, Number(iconSize) || 24))
     const pad = parsePadding(padding)
     const resolvedPadding = padding ?? "0px"
-    const [store, setStore] = useBunnyVideoStore()
-    const onControlHover = (isHovering: boolean) => reportControlHover(isHovering, setStore)
+    const [store, setStore] = useBunnyVideoStore(storeId)
+    const hoverLeaveTimeoutRef = useBunnyVideoHoverRef(storeId)
+    const onControlHover = (isHovering: boolean) =>
+        reportControlHover(isHovering, setStore, hoverLeaveTimeoutRef)
 
     const handleClick = (e: React.MouseEvent) => {
         e.stopPropagation()
@@ -132,6 +135,12 @@ BunnyFullscreenButton.defaultProps = {
 }
 
 addPropertyControls(BunnyFullscreenButton, {
+    storeId: {
+        type: ControlType.String,
+        title: "Store ID",
+        defaultValue: "default",
+        description: "Must match BunnyVideoPlayer.",
+    },
     iconColor: {
         type: ControlType.Color,
         title: "Icon Color",

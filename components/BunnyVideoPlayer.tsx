@@ -1,8 +1,16 @@
 import { addPropertyControls, ControlType, RenderTarget } from "framer"
-import { useCallback, useEffect, useRef, useState } from "react"
-import { useBunnyVideoStore, reportControlHover } from "./BunnyVideoStore.tsx"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import {
+    createInitialBunnyVideoState,
+    reportControlHover,
+    useBunnyVideoHoverRef,
+    useBunnyVideoStore,
+} from "./BunnyVideoStore.tsx"
+import type { BunnyVideoStoreState } from "./BunnyVideoStore.tsx"
 
 const HLS_JS_URL = "https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js"
+/** After loud (fake-mute) autoplay actually starts, wait this long before unmuting so the browser keeps playback. */
+const LOUD_UNMUTE_DELAY_MS = 220
 
 interface HlsInstance {
     loadSource: (url: string) => void
@@ -38,11 +46,6 @@ function loadHlsJs(): Promise<HlsConstructor | null> {
     })
 }
 
-/**
- * Build HLS stream URL from Bunny Stream library + video IDs.
- * 1) pullZoneHostname if provided (e.g. vz-12345.b-cdn.net from library API/settings)
- * 2) vz-{libraryId}.b-cdn.net (Stream library pull zone pattern)
- */
 function getThumbnailUrl(
     libraryId: string,
     videoId: string,
@@ -53,6 +56,23 @@ function getThumbnailUrl(
         return `https://${host}/${videoId}/thumbnail_1.jpg`
     }
     return `https://vz-${libraryId}.b-cdn.net/${videoId}/thumbnail_1.jpg`
+}
+
+/**
+ * Build HLS stream URL from Bunny Stream library + video IDs.
+ * 1) pullZoneHostname if provided (e.g. vz-12345.b-cdn.net from library API/settings)
+ * 2) vz-{libraryId}.b-cdn.net (Stream library pull zone pattern)
+ */
+function buildStreamUrl(
+    libraryId: string,
+    videoId: string,
+    pullZoneHostname?: string
+): string {
+    if (pullZoneHostname?.trim()) {
+        const host = pullZoneHostname.replace(/^https?:\/\//, "").split("/")[0].trim()
+        return `https://${host}/${videoId}/playlist.m3u8`
+    }
+    return `https://vz-${libraryId}.b-cdn.net/${videoId}/playlist.m3u8`
 }
 
 function PreviewPlaceholder(props: {
@@ -119,38 +139,202 @@ const QUALITY_OPTIONS = [
 
 type QualityValue = (typeof QUALITY_OPTIONS)[number]["value"]
 
-function findClosestLevelIndex(levels: { height?: number }[], targetHeight: number): number {
-    if (!levels.length) return 0
-    let bestIdx = 0
+/** hls.js level / master manifest row — kept in this file so Framer uploads a single component file. */
+type HlsLevelLike = {
+    height?: number
+    videoCodec?: string
+    codecs?: string
+    url?: string
+}
+
+type CodecClass = "hevc" | "av1" | "vp" | "avc" | "unknown"
+
+function hlsGetCodecString(level: HlsLevelLike): string {
+    if (level.videoCodec && level.videoCodec.trim()) return level.videoCodec.trim()
+    if (level.codecs && level.codecs.trim()) {
+        const parts = level.codecs.split(",").map((p) => p.trim())
+        const video = parts.find(
+            (p) =>
+                /^(avc|hvc|hev|dvh|vp0|vp9|av01|av1)/i.test(p) || /(avc1|hvc1|hev1|dvh1|vp09|vp08|av01)/i.test(p)
+        )
+        return (video || parts[0] || "").trim()
+    }
+    if (level.url) {
+        const u = level.url.toLowerCase()
+        if (u.includes("hevc") || u.includes("h265")) return "hvc1.synthetic"
+        if (u.includes("vp9") || u.includes("webm")) return "vp09.synthetic"
+    }
+    return ""
+}
+
+function hlsClassifyRendition(codecStr: string): CodecClass {
+    const c = codecStr.toLowerCase()
+    if (c.includes("hvc1") || c.includes("hev1") || c.includes("dvh1") || c.includes("hevc")) {
+        return "hevc"
+    }
+    if (c.startsWith("av01") || c.includes("av1")) {
+        return "av1"
+    }
+    if (c.includes("vp09") || c.includes("vp8") || c.includes("vp0")) {
+        return "vp"
+    }
+    if (c.includes("avc1") || c.includes("avc3") || c.includes("avc")) {
+        return "avc"
+    }
+    return "unknown"
+}
+
+const hlsRankHevc = (c: CodecClass): number => {
+    switch (c) {
+        case "hevc":
+            return 0
+        case "av1":
+            return 1
+        case "avc":
+            return 2
+        case "vp":
+            return 3
+        case "unknown":
+            return 4
+        default:
+            return 5
+    }
+}
+
+const hlsRankNonHevc = (c: CodecClass): number => {
+    switch (c) {
+        case "vp":
+            return 0
+        case "av1":
+            return 1
+        case "avc":
+            return 2
+        case "unknown":
+            return 3
+        case "hevc":
+            return 4
+        default:
+            return 5
+    }
+}
+
+function hlsGetPreferHevcRendition(): boolean {
+    if (typeof navigator === "undefined") return false
+    const ua = navigator.userAgent
+    if (
+        /Chrome|Chromium|CriOS|CrMo|Edg\/|EdgA|EdgiOS|OPR\/|Opera|OPiOS|SamsungBrowser|Firefox|FxiOS|Vivaldi|Brave/.test(ua)
+    ) {
+        return false
+    }
+    if (/(iPhone|iPad|iPod)/.test(ua) && /Safari/.test(ua)) return true
+    if (/Safari/.test(ua) && /Macintosh|Mac OS X/.test(ua)) return true
+    return false
+}
+
+type HlsIndexedLevel = { hlsIndex: number; height: number; codecStr: string; cls: CodecClass }
+
+function hlsPickBestInGroup(group: HlsIndexedLevel[], preferHevc: boolean): HlsIndexedLevel {
+    const rank = preferHevc ? hlsRankHevc : hlsRankNonHevc
+    return [...group].sort((a, b) => {
+        const d = rank(a.cls) - rank(b.cls)
+        if (d !== 0) return d
+        return a.hlsIndex - b.hlsIndex
+    })[0]
+}
+
+function findClosestHeightIndex(heights: number[], target: number): number {
+    if (!heights.length) return 0
+    let best = 0
     let bestDiff = Infinity
-    for (let i = 0; i < levels.length; i++) {
-        const h = levels[i].height ?? 0
-        const diff = Math.abs(h - targetHeight)
-        if (diff < bestDiff) {
-            bestDiff = diff
-            bestIdx = i
+    for (let i = 0; i < heights.length; i++) {
+        const d = Math.abs((heights[i] ?? 0) - target)
+        if (d < bestDiff) {
+            bestDiff = d
+            best = i
         }
     }
-    return bestIdx
+    return best
 }
 
-function buildStreamUrl(
-    libraryId: string,
-    videoId: string,
-    pullZoneHostname?: string
-): string {
-    if (pullZoneHostname?.trim()) {
-        const host = pullZoneHostname.replace(/^https?:\/\//, "").split("/")[0].trim()
-        return `https://${host}/${videoId}/playlist.m3u8`
+function buildQualitySelection(
+    levels: HlsLevelLike[],
+    preferHevc: boolean
+): { labels: string[]; heights: number[]; hlsLevelIndices: number[] } {
+    if (!levels.length) {
+        return { labels: [], heights: [], hlsLevelIndices: [] }
     }
-    return `https://vz-${libraryId}.b-cdn.net/${videoId}/playlist.m3u8`
+    const indexed: HlsIndexedLevel[] = levels.map((l, hlsIndex) => {
+        const codecStr = hlsGetCodecString(l)
+        return {
+            hlsIndex,
+            height: Math.max(0, l.height ?? 0),
+            codecStr,
+            cls: hlsClassifyRendition(codecStr),
+        }
+    })
+    const byHeight = new Map<number, HlsIndexedLevel[]>()
+    for (const row of indexed) {
+        if (row.height <= 0) continue
+        if (!byHeight.has(row.height)) byHeight.set(row.height, [])
+        byHeight.get(row.height)!.push(row)
+    }
+    const chosen: { hlsIndex: number; height: number; label: string }[] = []
+    for (const [, group] of byHeight) {
+        if (group.length === 0) continue
+        const height = group[0].height
+        const best = group.length === 1 ? group[0] : hlsPickBestInGroup(group, preferHevc)
+        chosen.push({ hlsIndex: best.hlsIndex, height, label: `${height}p` })
+    }
+    chosen.sort((a, b) => a.height - b.height)
+    return {
+        labels: chosen.map((c) => c.label),
+        heights: chosen.map((c) => c.height),
+        hlsLevelIndices: chosen.map((c) => c.hlsIndex),
+    }
 }
 
+function ControlsOverlay(props: {
+    store: BunnyVideoStoreState
+    setStore: (partial: Partial<BunnyVideoStoreState>) => void
+    hoverLeaveTimeoutRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>
+    children: React.ReactNode
+}) {
+    const { store, setStore, hoverLeaveTimeoutRef, children } = props
+    return (
+        <div
+            data-bunny-controls-overlay
+            onMouseOver={(e) => {
+                if ((e.target as HTMLElement).closest?.("[data-bunny-control]")) {
+                    reportControlHover(true, setStore, hoverLeaveTimeoutRef)
+                }
+            }}
+            onMouseOut={(e) => {
+                const overlayEl = e.currentTarget
+                const related = e.relatedTarget as Node | null
+                if (!related || !overlayEl.contains(related)) {
+                    reportControlHover(false, setStore, hoverLeaveTimeoutRef)
+                }
+            }}
+            style={{
+                position: "absolute",
+                inset: 0,
+                pointerEvents: store.controlsVisible ? "auto" : "none",
+                opacity: store.controlsVisible ? 1 : 0,
+                transition: "opacity 0.3s ease",
+                zIndex: 2,
+            }}
+        >
+            {children}
+        </div>
+    )
+}
+
+// Canvas insert: any-prefer-fixed + intrinsic 600×338 (16:9) so the frame is not Fit×Fit at 0×0.
 /**
  * @framerDisableUnlink
  * @framerDisableEdit
- * @framerSupportedLayoutWidth any
- * @framerSupportedLayoutHeight any
+ * @framerSupportedLayoutWidth any-prefer-fixed
+ * @framerSupportedLayoutHeight any-prefer-fixed
  * @framerIntrinsicWidth 600
  * @framerIntrinsicHeight 338
  */
@@ -168,8 +352,12 @@ export function BunnyVideoPlayer(props: {
     fallbackImage?: string
     startTimePercent?: number
     tapToPlay?: boolean
+    /** Play while the pointer is over the player; pauses on leave. Touch devices still use Tap to Play. */
+    playOnHover?: boolean
     previewOnCanvas?: boolean
     lazyLoad?: boolean
+    /** Pause playback when the player leaves the viewport; resume when it returns if it was playing. Helps CPU/GPU with many videos. */
+    pauseWhenOutOfView?: boolean
     fit?: "cover" | "contain" | "fill"
     quality?: QualityValue
     storeId?: string
@@ -190,26 +378,61 @@ export function BunnyVideoPlayer(props: {
         fallbackImage = "",
         startTimePercent = 0,
         tapToPlay = true,
+        playOnHover = false,
         previewOnCanvas = false,
         lazyLoad = false,
+        pauseWhenOutOfView = true,
         fit = "cover",
-        quality = "auto",
-        style,
-        children,
-    } = props
+    quality = "auto",
+    storeId = "default",
+    style,
+    children,
+} = props
 
     const videoRef = useRef<HTMLVideoElement>(null)
+    const programmaticPauseRef = useRef(false)
     const containerRef = useRef<HTMLDivElement>(null)
     const hlsRef = useRef<HlsInstance | null>(null)
-    const levelsRef = useRef<{ height?: number }[]>([])
+    const levelsRef = useRef<HlsLevelLike[]>([])
     const qualityRef = useRef(quality)
     qualityRef.current = quality
     const startTimeAppliedRef = useRef(false)
-    const [store, setStore] = useBunnyVideoStore()
+    /** `timeupdate` is ~4 Hz; use a ref so we only sync currentTime from it while paused. */
+    const playRef = useRef(false)
+    /** If we paused because the player left the viewport, resume when it returns (if still "playing"). */
+    const resumePlayAfterVisibleRef = useRef(false)
+    /** Last pointer position (viewport) — used when Play on Hover + carousel moves the player without firing pointerleave. */
+    const lastPointerClientRef = useRef({ x: 0, y: 0 })
+    const [store, setStore] = useBunnyVideoStore(storeId)
+    const hoverLeaveTimeoutRef = useBunnyVideoHoverRef(storeId)
+    const prevStoreIdRef = useRef(storeId)
+    useEffect(() => {
+        if (prevStoreIdRef.current !== storeId) {
+            prevStoreIdRef.current = storeId
+            setStore(createInitialBunnyVideoState())
+        }
+    }, [storeId, setStore])
+    playRef.current = store.play
+    const controlsVisibleRef = useRef(store.controlsVisible)
+    controlsVisibleRef.current = store.controlsVisible
+    /** Clear "resume when visible" once playback is on; does not run when `play` is false (so scroll-away keeps the flag). */
+    useEffect(() => {
+        if (!store.play) return
+        resumePlayAfterVisibleRef.current = false
+    }, [store.play])
     const [showPoster, setShowPoster] = useState(true)
     const [videoError, setVideoError] = useState(false)
 
+    const pauseVideoProgrammatic = (v: HTMLVideoElement) => {
+        programmaticPauseRef.current = true
+        v.pause()
+        requestAnimationFrame(() => {
+            programmaticPauseRef.current = false
+        })
+    }
+
     const isCanvas = RenderTarget.current() === RenderTarget.canvas
+    const isFramerBuilderPreview = RenderTarget.current() === RenderTarget.preview
     const shouldLoadVideo = !isCanvas || previewOnCanvas
     const showStaticFirstFrame = isCanvas && !previewOnCanvas && !poster
 
@@ -217,20 +440,158 @@ export function BunnyVideoPlayer(props: {
     const readyToLoad = shouldLoadVideo && (!lazyLoad || inView)
 
     const streamUrl = libraryId && videoId ? buildStreamUrl(libraryId, videoId, pullZoneHostname) : ""
+    /** Browsers allow autoplay when muted. Start muted, then unmute in `onPlaying` + interval (Autoplay on + Mute off, not play-on-hover). */
+    const useLoudAutoplay = Boolean(autoplay && !muted && !playOnHover)
+    const [loudPretendMuted, setLoudPretendMuted] = useState(
+        () => Boolean(autoplay && !muted && !playOnHover)
+    )
+    const loudPretendMutedRef = useRef(loudPretendMuted)
+    const loudUnmuteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    /** While true, `onPause` is ignored and we re-call play (browser can emit spurious pause when unmuting). */
+    const loudUnmuteSpuriousPauseGuardRef = useRef(false)
+    const loudAutoplayBruteIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+    const useLoudAutoplayRef = useRef(false)
+    /**
+     * While `Date.now() <` this value, off-screen `IntersectionObserver` must not set `play: false`.
+     * Unmute can race with a false "not visible" first frame; then the play effect pauses.
+     */
+    const loudOovUnmuteGuardUntilRef = useRef(0)
+    const prevLoudAutoplayKeyRef = useRef<string>("")
+    const loudAutoplayKey = `${String(autoplay)}|${String(muted)}|${String(playOnHover)}|${streamUrl}`
+    loudPretendMutedRef.current = loudPretendMuted
+    useLoudAutoplayRef.current = useLoudAutoplay
 
-    useEffect(() => {
-        if (!lazyLoad) return
+    /** Do not mount `<video>` until lazy viewport gate passes — avoids native `.m3u8` load + `onError` before HLS.js attaches. */
+    const shouldMountVideo = shouldLoadVideo && Boolean(streamUrl) && (!lazyLoad || readyToLoad)
+    /** Default Bunny thumb on canvas, and in the Framer in-app Preview (Builder), where there is no poster otherwise → avoids a black box. Published site: still no default unless a Poster is set. */
+    const bunnyPosterUrl =
+        libraryId && videoId ? getThumbnailUrl(libraryId, videoId, pullZoneHostname) : ""
+    const hasCustomPoster = Boolean(poster?.trim())
+    const posterForUi = hasCustomPoster
+        ? poster.trim()
+        : isCanvas || isFramerBuilderPreview
+          ? bunnyPosterUrl
+          : ""
+    /** Avoid double Bunny image on canvas: PreviewPlaceholder already draws the default thumbnail. */
+    const showPosterOverlay = showPoster && posterForUi && !showStaticFirstFrame
+
+    useLayoutEffect(() => {
+        const inFramerBuilderPreview = RenderTarget.current() === RenderTarget.preview
+        /* In-app Preview uses nested layouts / iframes where IntersectionObserver is unreliable (often “not visible”) →
+         * pauses immediately = black. Lazy viewport can also never fire → video never mounts. */
+        if (inFramerBuilderPreview && lazyLoad) {
+            setInView(true)
+        }
+        const needLazyObserver = lazyLoad && !inFramerBuilderPreview
+        const needVisibilityObserver = pauseWhenOutOfView && !inFramerBuilderPreview
+        if (!needLazyObserver && !needVisibilityObserver) return
+
         const el = containerRef.current
         if (!el) return
-        const obs = new IntersectionObserver(
-            ([entry]) => {
-                if (entry?.isIntersecting) setInView(true)
-            },
-            { rootMargin: "100px", threshold: 0 }
-        )
-        obs.observe(el)
-        return () => obs.disconnect()
-    }, [lazyLoad])
+
+        const observers: IntersectionObserver[] = []
+
+        /** Preload stream slightly before the player enters the viewport (separate from visibility below). */
+        if (needLazyObserver) {
+            const lazyObs = new IntersectionObserver(
+                ([entry]) => {
+                    if (entry?.isIntersecting) setInView(true)
+                },
+                { root: null, rootMargin: "100px", threshold: 0 }
+            )
+            lazyObs.observe(el)
+            observers.push(lazyObs)
+        }
+
+        /**
+         * Pause/resume against the real viewport: `rootMargin: 0` + `threshold: 0` so the first visible pixel
+         * counts as intersecting. (Do not reuse the lazy observer's expanded root — that broke resume timing.)
+         */
+        if (needVisibilityObserver) {
+            const visibilityObs = new IntersectionObserver(
+                ([entry]) => {
+                    if (!entry) return
+                    const visible =
+                        entry.isIntersecting === true || (entry.intersectionRatio ?? 0) > 0
+                    if (visible) {
+                        if (resumePlayAfterVisibleRef.current) {
+                            resumePlayAfterVisibleRef.current = false
+                            setStore({ play: true })
+                            requestAnimationFrame(() => {
+                                const v = videoRef.current
+                                if (v) {
+                                    v.playbackRate = 1
+                                    void v.play().catch(() => {})
+                                }
+                            })
+                        }
+                    } else if (playRef.current) {
+                        if (loudPretendMutedRef.current) return
+                        if (
+                            loudOovUnmuteGuardUntilRef.current > 0 &&
+                            Date.now() < loudOovUnmuteGuardUntilRef.current
+                        )
+                            return
+                        const v = videoRef.current
+                        if (v && document.fullscreenElement === v) return
+                        resumePlayAfterVisibleRef.current = true
+                        setStore({ play: false })
+                    }
+                },
+                { root: null, rootMargin: "0px", threshold: 0 }
+            )
+            visibilityObs.observe(el)
+            observers.push(visibilityObs)
+        }
+
+        return () => {
+            for (const o of observers) o.disconnect()
+        }
+    }, [lazyLoad, pauseWhenOutOfView, setStore])
+
+    /**
+     * Re-arm muted→unmute only when the player actually needs the trick (key change: new video or Framer prop flip).
+     * Do not re-arm on every frame after onPlaying has cleared `loudPretendMuted` (key unchanged).
+     */
+    useLayoutEffect(() => {
+        if (loudUnmuteTimeoutRef.current) {
+            clearTimeout(loudUnmuteTimeoutRef.current)
+            loudUnmuteTimeoutRef.current = null
+        }
+        if (!useLoudAutoplay) {
+            setLoudPretendMuted(false)
+            loudOovUnmuteGuardUntilRef.current = 0
+            prevLoudAutoplayKeyRef.current = loudAutoplayKey
+            return
+        }
+        if (prevLoudAutoplayKeyRef.current !== loudAutoplayKey) {
+            setLoudPretendMuted(true)
+            /* Cover load + unmute + layout flicker so OOV must not clear `play`. */
+            loudOovUnmuteGuardUntilRef.current = Date.now() + 45_000
+        }
+        prevLoudAutoplayKeyRef.current = loudAutoplayKey
+    }, [loudAutoplayKey, useLoudAutoplay])
+
+    /**
+     * Autoplay must drive `store.play`. Otherwise the play-sync effect calls `video.pause()` while
+     * `autoPlay` is on — the native autoplay path loses to React and the video often never starts.
+     * `playOnHover` uses pointer events instead, so we do not set play here.
+     * When the video is lazy-gated, we set play once it actually mounts.
+     */
+    useLayoutEffect(() => {
+        if (playOnHover || !autoplay || !shouldLoadVideo || !shouldMountVideo) return
+        setStore({ play: true })
+    }, [autoplay, playOnHover, shouldLoadVideo, shouldMountVideo, setStore])
+
+    useEffect(() => {
+        if (store.muted) {
+            if (loudUnmuteTimeoutRef.current) {
+                clearTimeout(loudUnmuteTimeoutRef.current)
+                loudUnmuteTimeoutRef.current = null
+            }
+            setLoudPretendMuted(false)
+        }
+    }, [store.muted])
 
     useEffect(() => {
         setStore({ muted })
@@ -238,16 +599,19 @@ export function BunnyVideoPlayer(props: {
 
     useEffect(() => {
         const hls = hlsRef.current
-        if (!hls || levelsRef.current.length === 0) return
+        if (!hls) return
         if (quality === "auto") {
             hls.currentLevel = -1
-        } else {
-            const opt = QUALITY_OPTIONS.find((o) => o.value === quality)
-            if (opt && opt.height > 0) {
-                hls.currentLevel = findClosestLevelIndex(levelsRef.current, opt.height)
-            }
+            return
         }
-    }, [quality])
+        const map = store.qualityHlsLevelByIndex
+        if (!map.length) return
+        const opt = QUALITY_OPTIONS.find((o) => o.value === quality)
+        if (opt && opt.height > 0) {
+            const menuIdx = findClosestHeightIndex(store.qualityHeights ?? [], opt.height)
+            hls.currentLevel = map[menuIdx] ?? 0
+        }
+    }, [quality, store.qualityHeights, store.qualityHlsLevelByIndex])
 
     useEffect(() => {
         if (!libraryId || !videoId || (!readyToLoad && !showStaticFirstFrame)) return
@@ -262,19 +626,29 @@ export function BunnyVideoPlayer(props: {
 
             if (Hls?.isSupported()) {
                 const hls = new Hls({
-                    enableWorker: true,
+                    /* Preview iframe can block HLS’s worker → no decoder / no playback. */
+                    enableWorker: RenderTarget.current() !== RenderTarget.preview,
                     lowLatencyMode: false,
                 })
                 hlsRef.current = hls
 
+                if (mounted) {
+                    setStore({
+                        loadingPercent: 0,
+                        qualities: [],
+                        qualityHeights: [],
+                        qualityHlsLevelByIndex: [],
+                    })
+                }
                 hls.loadSource(streamUrl)
                 hls.attachMedia(video)
 
-                hls.on(Hls.Events.MANIFEST_PARSED, (_, data: { levels?: { height?: number }[] }) => {
+                hls.on(Hls.Events.MANIFEST_PARSED, (_, data: unknown) => {
                     if (!mounted) return
-                    const levels = data.levels ?? []
+                    const levels = (data as { levels?: HlsLevelLike[] }).levels ?? []
                     levelsRef.current = levels
-                    const qualityLabels = levels.map((l) => `${l.height ?? 0}p`)
+                    const preferHevc = hlsGetPreferHevcRendition()
+                    const sel = buildQualitySelection(levels, preferHevc)
                     const q = qualityRef.current
                     let storeQuality = 0
                     if (q === "auto") {
@@ -282,31 +656,32 @@ export function BunnyVideoPlayer(props: {
                         storeQuality = 0
                     } else {
                         const opt = QUALITY_OPTIONS.find((o) => o.value === q)
-                        if (opt && opt.height > 0 && levels.length > 0) {
-                            const levelIdx = findClosestLevelIndex(levels, opt.height)
-                            hls.currentLevel = levelIdx
-                            storeQuality = levelIdx + 1
+                        if (opt && opt.height > 0 && sel.hlsLevelIndices.length > 0) {
+                            const menuIdx = findClosestHeightIndex(sel.heights, opt.height)
+                            hls.currentLevel = sel.hlsLevelIndices[menuIdx] ?? 0
+                            storeQuality = menuIdx + 1
                         }
                     }
-                    setStore({ qualities: qualityLabels, quality: storeQuality, ready: true, muted })
+                    setStore({
+                        qualities: sel.labels,
+                        qualityHeights: sel.heights,
+                        qualityHlsLevelByIndex: sel.hlsLevelIndices,
+                        quality: storeQuality,
+                        ready: true,
+                        muted,
+                    })
                     setShowPoster(false)
                 })
 
-                hls.on(Hls.Events.ERROR, (_, data: { fatal?: boolean }) => {
+                hls.on(Hls.Events.ERROR, (_, data: unknown) => {
                     if (!mounted) return
-                    if (data.fatal) {
+                    if ((data as { fatal?: boolean }).fatal) {
                         setVideoError(true)
                         setStore({ error: "Video failed to load" })
                     }
                 })
-
-                hls.on(Hls.Events.FRAG_LOADING, () => {
-                    if (mounted) setStore({ loadingPercent: 50 })
-                })
-                hls.on(Hls.Events.FRAG_LOADED, () => {
-                    if (mounted) setStore({ loadingPercent: 100 })
-                })
             } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+                if (mounted) setStore({ loadingPercent: 0 })
                 video.src = streamUrl
                 video.addEventListener("loadedmetadata", () => {
                     if (mounted) {
@@ -339,14 +714,20 @@ export function BunnyVideoPlayer(props: {
         const video = videoRef.current
         if (!video) return
 
-        if (store.play) video.play().catch(() => {})
-        else video.pause()
-
-        if (store.muted) {
+        /* Loud autoplay: start muted (browser allows), then onPlaying flips `loudPretendMuted` and we go full volume. */
+        const videoMuted = store.muted || (useLoudAutoplay && loudPretendMuted)
+        if (videoMuted) {
             video.muted = true
         } else {
             video.muted = false
             video.volume = store.volume / 100
+        }
+
+        if (store.play) {
+            video.playbackRate = 1
+            video.play().catch(() => {})
+        } else {
+            pauseVideoProgrammatic(video)
         }
 
         if (store.seekTo != null) {
@@ -356,7 +737,13 @@ export function BunnyVideoPlayer(props: {
 
         if (store.qualityToSet != null && hlsRef.current) {
             try {
-                const hlsLevel = store.qualityToSet === 0 ? -1 : store.qualityToSet - 1
+                const map = store.qualityHlsLevelByIndex
+                const hlsLevel =
+                    store.qualityToSet === 0
+                        ? -1
+                        : map.length > 0
+                          ? (map[store.qualityToSet - 1] ?? 0)
+                          : store.qualityToSet - 1
                 hlsRef.current.currentLevel = hlsLevel
                 setStore({ quality: store.qualityToSet, qualityToSet: null })
             } catch {
@@ -377,7 +764,137 @@ export function BunnyVideoPlayer(props: {
                 setStore({ fullscreenRequest: false })
             }
         }
-    }, [store.play, store.muted, store.volume, store.seekTo, store.qualityToSet, store.fullscreenRequest, store.fullscreen, setStore])
+    }, [
+        store.play,
+        store.muted,
+        store.volume,
+        store.seekTo,
+        store.qualityToSet,
+        store.fullscreenRequest,
+        store.fullscreen,
+        store.ready,
+        setStore,
+        useLoudAutoplay,
+        loudPretendMuted,
+    ])
+
+    useEffect(() => {
+        if (!useLoudAutoplay || !store.play || !loudPretendMuted) return
+        if (loudAutoplayBruteIntervalRef.current) {
+            clearInterval(loudAutoplayBruteIntervalRef.current)
+            loudAutoplayBruteIntervalRef.current = null
+        }
+        let n = 0
+        const id = window.setInterval(() => {
+            n += 1
+            if (n > 100) {
+                if (loudAutoplayBruteIntervalRef.current === id) {
+                    clearInterval(id)
+                    loudAutoplayBruteIntervalRef.current = null
+                }
+                return
+            }
+            if (!loudPretendMutedRef.current) return
+            const v = videoRef.current
+            if (!v) return
+            v.muted = true
+            v.playbackRate = 1
+            void v.play().catch(() => {})
+        }, 100)
+        loudAutoplayBruteIntervalRef.current = id
+        return () => {
+            clearInterval(id)
+            if (loudAutoplayBruteIntervalRef.current === id) loudAutoplayBruteIntervalRef.current = null
+        }
+    }, [useLoudAutoplay, store.play, loudPretendMuted, store.ready])
+
+    const storeRef = useRef(store)
+    storeRef.current = store
+
+    const scheduleLoudAutoplayUnmute = useCallback(() => {
+        if (!useLoudAutoplayRef.current || !loudPretendMutedRef.current) return
+        if (loudUnmuteTimeoutRef.current != null) return
+        loudUnmuteTimeoutRef.current = window.setTimeout(() => {
+            loudUnmuteTimeoutRef.current = null
+            if (!loudPretendMutedRef.current) return
+            if (loudAutoplayBruteIntervalRef.current) {
+                clearInterval(loudAutoplayBruteIntervalRef.current)
+                loudAutoplayBruteIntervalRef.current = null
+            }
+            loudPretendMutedRef.current = false
+            const el = videoRef.current
+            if (!el) {
+                setLoudPretendMuted(false)
+                return
+            }
+            loudUnmuteSpuriousPauseGuardRef.current = true
+            const vol = (storeRef.current.volume ?? 100) / 100
+            el.muted = false
+            el.volume = vol
+            el.playbackRate = 1
+            void el.play().catch(() => {})
+            requestAnimationFrame(() => {
+                const v = videoRef.current
+                if (v) {
+                    v.muted = false
+                    v.volume = vol
+                    v.playbackRate = 1
+                    void v.play().catch(() => {})
+                }
+            })
+            setLoudPretendMuted(false)
+            setStore({ play: true })
+            loudOovUnmuteGuardUntilRef.current = Date.now() + 12_000
+            window.setTimeout(() => {
+                loudUnmuteSpuriousPauseGuardRef.current = false
+            }, 400)
+        }, LOUD_UNMUTE_DELAY_MS)
+    }, [setStore])
+
+    useEffect(() => {
+        return () => {
+            if (loudUnmuteTimeoutRef.current) {
+                clearTimeout(loudUnmuteTimeoutRef.current)
+                loudUnmuteTimeoutRef.current = null
+            }
+        }
+    }, [])
+
+    useEffect(() => {
+        if (playOnHover || !autoplay || muted || !shouldMountVideo) return
+        const onPageClick = () => {
+            if (loudUnmuteTimeoutRef.current) {
+                clearTimeout(loudUnmuteTimeoutRef.current)
+                loudUnmuteTimeoutRef.current = null
+            }
+            setLoudPretendMuted((m) => (m ? false : m))
+            const v = videoRef.current
+            const s = storeRef.current
+            if (!v || !s.play) return
+            if (!v.paused) return
+            v.muted = false
+            v.volume = s.volume / 100
+            v.playbackRate = 1
+            void v.play().catch(() => {})
+        }
+        window.addEventListener("click", onPageClick, { once: true, passive: true, capture: false })
+        return () => window.removeEventListener("click", onPageClick, false)
+    }, [autoplay, muted, playOnHover, shouldMountVideo])
+
+    useEffect(() => {
+        if (!autoplay || playOnHover) return
+        const onPageShow = (e: PageTransitionEvent) => {
+            if (!e.persisted) return
+            setStore({ play: true })
+            const v = videoRef.current
+            if (v) {
+                v.playbackRate = 1
+                void v.play().catch(() => {})
+            }
+        }
+        window.addEventListener("pageshow", onPageShow)
+        return () => window.removeEventListener("pageshow", onPageShow)
+    }, [autoplay, playOnHover, setStore])
 
     useEffect(() => {
         const onFullscreenChange = () => setStore({ fullscreen: !!document.fullscreenElement })
@@ -401,7 +918,7 @@ export function BunnyVideoPlayer(props: {
             }, delayMs)
         }
         const showAndReschedule = () => {
-            setStore({ controlsVisible: true })
+            if (!controlsVisibleRef.current) setStore({ controlsVisible: true })
             scheduleHide()
         }
         const onMouseLeave = () => {
@@ -422,8 +939,111 @@ export function BunnyVideoPlayer(props: {
         }
     }, [isCanvas, hideControlsOnIdle, controlsHideDelay, setStore])
 
+    const playOnHoverRef = useRef(playOnHover)
+    playOnHoverRef.current = playOnHover
+    const shouldLoadVideoRef = useRef(shouldLoadVideo)
+    shouldLoadVideoRef.current = shouldLoadVideo
+
+    /** Native pointer events + immediate play/pause — avoids one+ frame lag from setState → useEffect. */
+    useLayoutEffect(() => {
+        if (!playOnHover || !shouldLoadVideo) return
+        const el = containerRef.current
+        if (!el) return
+
+        const onPointerEnter = (e: PointerEvent) => {
+            if (!playOnHoverRef.current || !shouldLoadVideoRef.current) return
+            const v = videoRef.current
+            if (v && document.fullscreenElement === v) return
+            lastPointerClientRef.current = { x: e.clientX, y: e.clientY }
+            resumePlayAfterVisibleRef.current = false
+            if (v) {
+                v.playbackRate = 1
+                void v.play().catch(() => {})
+            }
+            setStore({ play: true })
+        }
+        const onPointerLeave = () => {
+            if (!playOnHoverRef.current || !shouldLoadVideoRef.current) return
+            const v = videoRef.current
+            if (v && document.fullscreenElement === v) return
+            if (v) pauseVideoProgrammatic(v)
+            setStore({ play: false })
+        }
+
+        el.addEventListener("pointerenter", onPointerEnter as EventListener, { passive: true })
+        el.addEventListener("pointerleave", onPointerLeave, { passive: true })
+        return () => {
+            el.removeEventListener("pointerenter", onPointerEnter as EventListener)
+            el.removeEventListener("pointerleave", onPointerLeave)
+        }
+    }, [playOnHover, shouldLoadVideo, setStore])
+
+    /** Keep pointer coords fresh while the carousel can move the player without moving the mouse. */
+    useEffect(() => {
+        if (!playOnHover || !store.play) return
+        const sync = (e: PointerEvent) => {
+            lastPointerClientRef.current = { x: e.clientX, y: e.clientY }
+        }
+        document.addEventListener("pointermove", sync as EventListener, { passive: true })
+        return () => document.removeEventListener("pointermove", sync as EventListener)
+    }, [playOnHover, store.play])
+
+    /**
+     * Transform-based carousels move the player under a stationary pointer — `pointerleave` never fires.
+     * Each frame, test pointer vs current bounding rect and pause when outside.
+     */
+    useEffect(() => {
+        if (!playOnHover || !shouldMountVideo || !store.play) return
+        let rafId = 0
+        const tick = () => {
+            if (!playOnHoverRef.current) return
+            const container = containerRef.current
+            if (!container) {
+                rafId = requestAnimationFrame(tick)
+                return
+            }
+            const { x, y } = lastPointerClientRef.current
+            const r = container.getBoundingClientRect()
+            const inside = x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+            if (!inside) {
+                const v = videoRef.current
+                if (v) {
+                    v.playbackRate = 1
+                    pauseVideoProgrammatic(v)
+                }
+                setStore({ play: false })
+                return
+            }
+            rafId = requestAnimationFrame(tick)
+        }
+        rafId = requestAnimationFrame(tick)
+        return () => cancelAnimationFrame(rafId)
+    }, [playOnHover, shouldMountVideo, store.play, setStore])
+
     const onPlay = useCallback(() => setStore({ play: true }), [setStore])
-    const onPause = useCallback(() => setStore({ play: false }), [setStore])
+    const onVideoPlaying = useCallback(() => {
+        setStore({ play: true })
+        scheduleLoudAutoplayUnmute()
+    }, [setStore, scheduleLoudAutoplayUnmute])
+    const onPause = useCallback(() => {
+        if (programmaticPauseRef.current) return
+        if (loudUnmuteSpuriousPauseGuardRef.current) {
+            const v = videoRef.current
+            if (v && !document.hidden) {
+                v.playbackRate = 1
+                void v.play().catch(() => {})
+            }
+            return
+        }
+        if (document.hidden) {
+            setStore({ play: false })
+            return
+        }
+        if (autoplay && !muted && !playOnHover && !storeRef.current.fullscreen) {
+            return
+        }
+        setStore({ play: false })
+    }, [setStore, autoplay, muted, playOnHover])
     const onEnded = useCallback(() => setStore({ ended: true }), [setStore])
     const onSeeked = useCallback(() => setStore({ seeked: true }), [setStore])
     const onError = useCallback(() => {
@@ -433,30 +1053,83 @@ export function BunnyVideoPlayer(props: {
     const onTimeUpdate = useCallback(() => {
         const v = videoRef.current
         if (!v) return
-        const duration = v.duration
-        const currentTime = v.currentTime
-        setStore({ currentTime, duration })
-        if (startTimePercent > 0 && duration > 0 && !startTimeAppliedRef.current) {
-            startTimeAppliedRef.current = true
-            v.currentTime = (startTimePercent / 100) * duration
+        if (
+            useLoudAutoplayRef.current &&
+            loudPretendMutedRef.current &&
+            !v.paused &&
+            v.currentTime > 0.05
+        ) {
+            scheduleLoudAutoplayUnmute()
         }
-    }, [startTimePercent, setStore])
+        const duration = v.duration
+        const d = Number.isFinite(duration) ? duration : 0
+        if (!playRef.current) {
+            setStore({ currentTime: v.currentTime, duration: d })
+        }
+        if (startTimePercent > 0 && d > 0 && !startTimeAppliedRef.current) {
+            startTimeAppliedRef.current = true
+            v.currentTime = (startTimePercent / 100) * d
+        }
+    }, [startTimePercent, setStore, scheduleLoudAutoplayUnmute])
+
+    /**
+     * Smooth progress UI: ~60fps store updates while playing.
+     * When Play on Hover is on, skip this — carousels + many tickers would otherwise thrash React; `timeupdate` is enough.
+     */
+    useEffect(() => {
+        if (!shouldMountVideo || !store.play || playOnHover) return
+        let rafId = 0
+        const tick = () => {
+            const v = videoRef.current
+            if (v) {
+                const dur = v.duration
+                setStore({
+                    currentTime: v.currentTime,
+                    duration: Number.isFinite(dur) ? dur : 0,
+                })
+            }
+            rafId = requestAnimationFrame(tick)
+        }
+        rafId = requestAnimationFrame(tick)
+        return () => cancelAnimationFrame(rafId)
+    }, [shouldMountVideo, store.play, playOnHover, setStore])
     const onProgress = useCallback(() => {
         const v = videoRef.current
         if (!v?.buffered?.length) return
         const buffered = v.buffered.end(v.buffered.length - 1)
         const duration = v.duration
-        const pct = duration > 0 ? (buffered / duration) * 100 : 0
+        if (!Number.isFinite(duration) || duration <= 0) {
+            setStore({ loadingPercent: 0 })
+            return
+        }
+        const pct = Math.min(100, Math.max(0, (buffered / duration) * 100))
         setStore({ loadingPercent: pct })
     }, [setStore])
 
     const handleTapToPlay = () => {
         if (!tapToPlay || !shouldLoadVideo || store.fullscreen) return
+        if (loudPretendMuted) {
+            if (loudUnmuteTimeoutRef.current) {
+                clearTimeout(loudUnmuteTimeoutRef.current)
+                loudUnmuteTimeoutRef.current = null
+            }
+            setLoudPretendMuted(false)
+        }
         const video = videoRef.current
+        if (video && autoplay && !muted && store.play && video.paused) {
+            video.muted = false
+            video.volume = store.volume / 100
+            video.playbackRate = 1
+            void video.play().catch(() => {})
+            return
+        }
         const nextPlay = !store.play
+        resumePlayAfterVisibleRef.current = false
         if (video) {
-            if (nextPlay) video.play().catch(() => {})
-            else video.pause()
+            if (nextPlay) {
+                video.playbackRate = 1
+                video.play().catch(() => {})
+            } else pauseVideoProgrammatic(video)
         }
         setStore({ play: nextPlay })
     }
@@ -476,11 +1149,14 @@ export function BunnyVideoPlayer(props: {
               ? { objectFit: "contain" }
               : { objectFit: "cover" } /* fill: use cover to avoid distortion, crop to fill */
 
-    if (videoError && fallbackImage) {
+    const hasCustomFallback = Boolean(fallbackImage?.trim())
+    const fallbackForError = hasCustomFallback ? fallbackImage.trim() : isCanvas ? bunnyPosterUrl : ""
+
+    if (videoError && fallbackForError) {
         return (
             <div style={{ width: "100%", height: "100%", ...style }}>
                 <img
-                    src={fallbackImage}
+                    src={fallbackForError}
                     alt="Video unavailable"
                     style={{ width: "100%", height: "100%", ...fitStyle }}
                 />
@@ -511,7 +1187,7 @@ export function BunnyVideoPlayer(props: {
         <div
             ref={containerRef}
             role="button"
-            tabIndex={tapToPlay ? 0 : undefined}
+            tabIndex={tapToPlay || playOnHover ? 0 : undefined}
             onClick={handleTapToPlay}
             onKeyDown={handleKeyDown}
             style={{
@@ -519,11 +1195,11 @@ export function BunnyVideoPlayer(props: {
                 width: "100%",
                 height: "100%",
                 overflow: "hidden",
-                cursor: tapToPlay ? "pointer" : undefined,
+                cursor: tapToPlay || playOnHover ? "pointer" : undefined,
                 ...style,
             }}
         >
-            {showPoster && poster && (
+            {showPosterOverlay && (
                 <div
                     style={{
                         position: "absolute",
@@ -533,7 +1209,7 @@ export function BunnyVideoPlayer(props: {
                     }}
                 >
                     <img
-                        src={poster}
+                        src={posterForUi}
                         alt=""
                         style={{ width: "100%", height: "100%", ...fitStyle }}
                     />
@@ -548,18 +1224,19 @@ export function BunnyVideoPlayer(props: {
                     fitStyle={fitStyle}
                 />
             )}
-            {shouldLoadVideo && streamUrl && (
+            {shouldMountVideo && (
                 <>
                     <video
                         ref={videoRef}
-                        src={streamUrl}
-                        poster={poster || undefined}
+                        poster={posterForUi || undefined}
+                        preload={lazyLoad ? "metadata" : "auto"}
                         loop={loop}
-                        muted={muted}
-                        autoPlay={autoplay}
+                        muted={!!(muted || (useLoudAutoplay && loudPretendMuted))}
+                        autoPlay={autoplay && !useLoudAutoplay}
                         playsInline
                         controls={showControls && store.fullscreen}
                         onPlay={onPlay}
+                        onPlaying={onVideoPlaying}
                         onPause={onPause}
                         onEnded={onEnded}
                         onSeeked={onSeeked}
@@ -582,39 +1259,21 @@ export function BunnyVideoPlayer(props: {
                 </>
             )}
             {children && (
-                <div
-                    data-bunny-controls-overlay
-                    onMouseOver={(e) => {
-                        if ((e.target as HTMLElement).closest?.("[data-bunny-control]")) {
-                            reportControlHover(true, setStore)
-                        }
-                    }}
-                    onMouseOut={(e) => {
-                        const overlay = e.currentTarget
-                        const related = e.relatedTarget as Node | null
-                        if (!related || !overlay.contains(related)) {
-                            reportControlHover(false, setStore)
-                        }
-                    }}
-                    style={{
-                        position: "absolute",
-                        inset: 0,
-                        pointerEvents: store.controlsVisible ? "auto" : "none",
-                        opacity: store.controlsVisible ? 1 : 0,
-                        transition: "opacity 0.3s ease",
-                        zIndex: 2,
-                    }}
+                <ControlsOverlay
+                    store={store}
+                    setStore={setStore}
+                    hoverLeaveTimeoutRef={hoverLeaveTimeoutRef}
                 >
                     {children}
-                </div>
+                </ControlsOverlay>
             )}
         </div>
     )
 }
 
 BunnyVideoPlayer.defaultProps = {
-    libraryId: "",
     videoId: "",
+    libraryId: "",
     pullZoneHostname: "",
     autoplay: false,
     loop: false,
@@ -626,10 +1285,13 @@ BunnyVideoPlayer.defaultProps = {
     fallbackImage: "",
     startTimePercent: 0,
     tapToPlay: true,
+    playOnHover: false,
     previewOnCanvas: false,
     lazyLoad: false,
+    pauseWhenOutOfView: true,
     fit: "cover" as const,
     quality: "auto" as const,
+    storeId: "default",
 }
 
 addPropertyControls(BunnyVideoPlayer, {
@@ -638,8 +1300,8 @@ addPropertyControls(BunnyVideoPlayer, {
         title: "Content",
         hidden: () => true,
     },
-    libraryId: { type: ControlType.String, title: "Library ID" },
     videoId: { type: ControlType.String, title: "Video ID" },
+    libraryId: { type: ControlType.String, title: "Library ID" },
     pullZoneHostname: { type: ControlType.String, title: "CDN host name" },
     previewOnCanvas: {
         type: ControlType.Boolean,
@@ -647,7 +1309,27 @@ addPropertyControls(BunnyVideoPlayer, {
         enabledTitle: "On",
         disabledTitle: "Off",
     },
-    autoplay: { type: ControlType.Boolean, title: "Autoplay" },
+    autoplay: {
+        type: ControlType.Boolean,
+        title: "Autoplay",
+        description:
+            "With Muted off: playback starts muted so the browser allows it, then un-mutes ~0.22s after playback really starts (`playing` / time). Play on hover overrides. If needed, one click anywhere retries.",
+    },
+    tapToPlay: {
+        type: ControlType.Boolean,
+        title: "Tap to Play",
+        enabledTitle: "On",
+        disabledTitle: "Off",
+        defaultValue: true,
+    },
+    playOnHover: {
+        type: ControlType.Boolean,
+        title: "Play on Hover",
+        enabledTitle: "On",
+        disabledTitle: "Off",
+        defaultValue: false,
+        description: "Play while the cursor is over the player; pauses when it leaves. Touch devices still use Tap to Play.",
+    },
     loop: { type: ControlType.Boolean, title: "Loop" },
     muted: { type: ControlType.Boolean, title: "Muted" },
     showControls: { type: ControlType.Boolean, title: "Show Controls" },
@@ -697,6 +1379,23 @@ addPropertyControls(BunnyVideoPlayer, {
         title: "Lazy Load",
         enabledTitle: "On",
         disabledTitle: "Off",
-        description: "Made by [Stōkt](https://wearestokt.com/)",
+        description:
+            "Load the video when the player enters the viewport. Reduces initial weight when many players are off-screen.",
+    },
+    pauseWhenOutOfView: {
+        type: ControlType.Boolean,
+        title: "Pause Off-Screen",
+        enabledTitle: "On",
+        disabledTitle: "Off",
+        defaultValue: true,
+        description:
+            "Pause when this player leaves the viewport and resume when it returns (if it was playing). Reduces load with many videos.",
+    },
+    storeId: {
+        type: ControlType.String,
+        title: "Store ID",
+        defaultValue: "default",
+        description:
+            "Same id on every control for this video. Duplicate slides may share one id; play state stays linked.\n\nMade by [Stōkt](https://wearestokt.com/)",
     },
 })

@@ -1,31 +1,55 @@
 # Bunny Stream Framer Components
 
-Standalone Framer code components for [Bunny Stream](https://bunny.net/stream) video playback.
+Standalone Framer code components for [Bunny Stream](https://bunny.net/stream) video playback, plus a **separate** optional image carousel.
+
+## Repos layout
+
+| Path | What it is |
+|------|----------------|
+| [`components/`](components/) | Video player, store, controls |
+| [`plugin/`](plugin/) | **Bunny Stream Player** Framer plugin (installs everything under `components/` except the carousel) |
+| [`bunny-image-carousel/`](bunny-image-carousel/) | **Image carousel** only: one [`BunnyImageCarousel.tsx`](bunny-image-carousel/BunnyImageCarousel.tsx) + its own [`plugin/`](bunny-image-carousel/plugin/) |
+
+The carousel is **not** bundled with the main Stream plugin so you can ship or omit it independently.
 
 ## Install Options
 
-**Option A – Plugin (recommended):** Use the [Bunny Stream Framer plugin](plugin/) to install all components with one click. Run `npm run dev` in the `plugin/` folder, then open the plugin in Framer and click "Install Components".
+### Video player + controls
 
-**Option B – Manual copy-paste:** Copy each component into Framer and add to your Workspace Library (see below).
+**Option A – Plugin:** [`plugin/`](plugin/) → `npm install && npm run dev`, open **Bunny Stream Player** in Framer, install components.
 
-## Setup in Framer (manual)
+**Option B – Manual:** See [Setup in Framer (manual)](#setup-in-framer-manual) below.
 
-**Order matters** – Create `BunnyVideoStore` first, then the player, then controls.
+### Image carousel only
 
-1. **BunnyVideoStore** – Assets → Code → Create Code File → name it `BunnyVideoStore`. Paste `components/BunnyVideoStore.tsx`. Use import `./BunnyVideoStore.tsx` (extension required).
+**Option A – Plugin:** [`bunny-image-carousel/plugin/`](bunny-image-carousel/plugin/) → `npm install && npm run dev`, open **Bunny Image Carousel** in Framer. Add the **`three`** npm package in Framer first.
 
-2. **BunnyVideoPlayer** – Create code file, paste `components/BunnyVideoPlayer.tsx`. It imports from `./BunnyVideoStore`.
+**Option B – Manual:** Add **`three`**, then paste [`bunny-image-carousel/BunnyImageCarousel.tsx`](bunny-image-carousel/BunnyImageCarousel.tsx) into a single Framer code file. Details: [`bunny-image-carousel/README.md`](bunny-image-carousel/README.md).
 
-3. **Control components** – Create one code file per component. Each imports from `./BunnyVideoStore`. Framer resolves imports by file name.
+## Setup in Framer (manual) — video stack
+
+**Order matters** – Create shared modules first, then the player, then controls.
+
+1. **BunnyVideoStore** – Paste [`components/BunnyVideoStore.tsx`](components/BunnyVideoStore.tsx) as `BunnyVideoStore.tsx`.
+
+2. **BunnyVideoPlayer** – Paste [`components/BunnyVideoPlayer.tsx`](components/BunnyVideoPlayer.tsx) (imports `./BunnyVideoStore.tsx` only).
+
+3. **Control components** – One file each from [`components/`](components/); each imports `./BunnyVideoStore.tsx`.
 
 4. **Add to Library** – Right-click each component → Add to Library.
 
 ## Components
 
-### Core
+### Core (video)
+
 - **BunnyVideoPlayer** – Main video embed. Requires `libraryId` and `videoId` from your Bunny Stream dashboard.
 
+### Image carousel (separate folder)
+
+- **BunnyImageCarousel** – Lives under [`bunny-image-carousel/`](bunny-image-carousel/). Self-contained `BunnyImageCarousel.tsx` (only `framer`, `react`, `three`). See [`bunny-image-carousel/README.md`](bunny-image-carousel/README.md).
+
 ### Method Triggers (buttons/sliders that control the player)
+
 - BunnyPlayPauseButton
 - BunnyVolumeSlider
 - BunnyProgressBar (seekable)
@@ -33,11 +57,11 @@ Standalone Framer code components for [Bunny Stream](https://bunny.net/stream) v
 - BunnyQualityPickerButton
 - BunnyFullscreenButton
 
-## Usage
+## Usage (video)
 
 1. Add **BunnyVideoPlayer** to the canvas. Set Library ID and Video ID in the Properties panel.
 2. Add control components (e.g. BunnyPlayPauseButton, BunnyProgressBar) near the player.
-3. **For fullscreen:** **BunnyFullscreenButton** enters fullscreen only. Position it where you want (e.g. bottom-right). When in fullscreen, exit via the native video controls' fullscreen button.
+3. **For fullscreen:** **BunnyFullscreenButton** enters fullscreen only. When in fullscreen, exit via the native video controls' fullscreen button.
 4. All components share state via the store – no wiring needed.
 
 ## Bunny Stream

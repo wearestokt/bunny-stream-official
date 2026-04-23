@@ -2,6 +2,8 @@ import { addPropertyControls, ControlType, RenderTarget } from "framer"
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import {
     createInitialBunnyVideoState,
+    muteOtherStoresForExclusiveAudio,
+    releaseExclusiveAudioIfOwner,
     reportControlHover,
     useBunnyVideoHoverRef,
     useBunnyVideoStore,
@@ -440,6 +442,29 @@ export function BunnyVideoPlayer(props: {
         if (!store.play) return
         resumePlayAfterVisibleRef.current = false
     }, [store.play])
+
+    useEffect(() => {
+        return () => releaseExclusiveAudioIfOwner(storeId)
+    }, [storeId])
+
+    useEffect(() => {
+        if (!store.play || store.muted) releaseExclusiveAudioIfOwner(storeId)
+    }, [store.play, store.muted, storeId])
+
+    /** When this player starts playing again while unmuted, re-apply exclusive mute to others. */
+    const prevPlayForExclusiveRef = useRef<boolean | null>(null)
+    useEffect(() => {
+        if (prevPlayForExclusiveRef.current === null) {
+            prevPlayForExclusiveRef.current = store.play
+            return
+        }
+        const wasPlaying = prevPlayForExclusiveRef.current
+        prevPlayForExclusiveRef.current = store.play
+        if (store.play && !wasPlaying && !store.muted) {
+            muteOtherStoresForExclusiveAudio(storeId)
+        }
+    }, [store.play, store.muted, storeId])
+
     const [showPoster, setShowPoster] = useState(true)
     /** When no Framer Poster: decoded first video frame, else Bunny `thumbnail.jpg` fallback. */
     const [firstFramePosterUrl, setFirstFramePosterUrl] = useState<string | null>(null)
@@ -945,6 +970,7 @@ export function BunnyVideoPlayer(props: {
             }
             loudUnmuteSpuriousPauseGuardRef.current = true
             const vol = (storeRef.current.volume ?? 100) / 100
+            muteOtherStoresForExclusiveAudio(storeId)
             el.muted = false
             el.volume = vol
             el.playbackRate = 1
@@ -965,7 +991,7 @@ export function BunnyVideoPlayer(props: {
                 loudUnmuteSpuriousPauseGuardRef.current = false
             }, 400)
         }, LOUD_UNMUTE_DELAY_MS)
-    }, [setStore])
+    }, [setStore, storeId])
 
     useEffect(() => {
         return () => {
@@ -988,6 +1014,7 @@ export function BunnyVideoPlayer(props: {
             const s = storeRef.current
             if (!v || !s.play) return
             if (!v.paused) return
+            muteOtherStoresForExclusiveAudio(storeId)
             v.muted = false
             v.volume = s.volume / 100
             v.playbackRate = 1
@@ -995,7 +1022,7 @@ export function BunnyVideoPlayer(props: {
         }
         window.addEventListener("click", onPageClick, { once: true, passive: true, capture: false })
         return () => window.removeEventListener("click", onPageClick, false)
-    }, [autoplay, muted, playOnHover, shouldMountVideo])
+    }, [autoplay, muted, playOnHover, shouldMountVideo, storeId])
 
     useEffect(() => {
         if (!autoplay || playOnHover) return
@@ -1152,15 +1179,20 @@ export function BunnyVideoPlayer(props: {
             return
         }
         if (document.hidden) {
+            releaseExclusiveAudioIfOwner(storeId)
             setStore({ play: false })
             return
         }
         if (autoplay && !muted && !playOnHover && !storeRef.current.fullscreen) {
             return
         }
+        releaseExclusiveAudioIfOwner(storeId)
         setStore({ play: false })
-    }, [setStore, autoplay, muted, playOnHover])
-    const onEnded = useCallback(() => setStore({ ended: true }), [setStore])
+    }, [setStore, autoplay, muted, playOnHover, storeId])
+    const onEnded = useCallback(() => {
+        releaseExclusiveAudioIfOwner(storeId)
+        setStore({ ended: true })
+    }, [setStore, storeId])
     const onSeeked = useCallback(() => setStore({ seeked: true }), [setStore])
     const onError = useCallback(() => {
         setVideoError(true)
@@ -1237,6 +1269,7 @@ export function BunnyVideoPlayer(props: {
         }
         const video = videoRef.current
         if (video && autoplay && !muted && store.play && video.paused) {
+            muteOtherStoresForExclusiveAudio(storeId)
             video.muted = false
             video.volume = store.volume / 100
             video.playbackRate = 1
@@ -1557,6 +1590,6 @@ addPropertyControls(BunnyVideoPlayer, {
         title: "Store ID",
         defaultValue: "default",
         description:
-            "Same id on every control for this video. Duplicate slides may share one id; play state stays linked.\n\nMade by [Stōkt](https://wearestokt.com/)",
+            "Same id on every control for this video. Duplicate slides may share one id; play state stays linked.\n\nUse a different Store ID per video on the same page so only one can be unmuted at a time (others auto-mute when you unmute another).\n\nMade by [Stōkt](https://wearestokt.com/)",
     },
 })

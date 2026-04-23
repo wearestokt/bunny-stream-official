@@ -1,6 +1,12 @@
 import { addPropertyControls, ControlType } from "framer"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useBunnyVideoStore, reportControlHover, useBunnyVideoHoverRef } from "./BunnyVideoStore.tsx"
+import {
+    muteOtherStoresForExclusiveAudio,
+    relinquishExclusiveAudioVictim,
+    reportControlHover,
+    useBunnyVideoHoverRef,
+    useBunnyVideoStore,
+} from "./BunnyVideoStore.tsx"
 
 function parsePadding(value: string | undefined): { top: number; right: number; bottom: number; left: number } {
     if (!value || typeof value !== "string") return { top: 0, right: 0, bottom: 0, left: 0 }
@@ -221,9 +227,12 @@ export function BunnyVolumeSlider(props: {
         (pct: number) => {
             const v = resolvedMin + (pct / 100) * (resolvedMax - resolvedMin)
             const vol = Math.round(v)
+            const willUnmute = vol > 0 && store.muted
+            if (willUnmute) muteOtherStoresForExclusiveAudio(storeId)
+            if (vol <= 0) relinquishExclusiveAudioVictim(storeId)
             setStore({ volume: vol, muted: vol <= 0 })
         },
-        [resolvedMin, resolvedMax, setStore]
+        [resolvedMin, resolvedMax, setStore, store.muted, storeId]
     )
 
     const handlePointerDown = useCallback(
@@ -272,8 +281,10 @@ export function BunnyVolumeSlider(props: {
                 store.volumeBeforeMute ??
                 (store.volume > 0 ? store.volume : 100)
             const restore = Math.max(resolvedMin, Math.min(resolvedMax, restoreFrom))
+            muteOtherStoresForExclusiveAudio(storeId)
             setStore({ muted: false, volume: restore > 0 ? restore : Math.max(1, resolvedMin) })
         } else {
+            relinquishExclusiveAudioVictim(storeId)
             setStore({ muted: true, volume: 0, volumeBeforeMute: store.volume })
         }
     }

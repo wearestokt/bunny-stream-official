@@ -68,6 +68,24 @@ type StoreEntry = {
 
 const registry = new Map<string, StoreEntry>()
 
+/** Last player that called `muteOtherStoresForExclusiveAudio` (the one “holding” exclusive sound). */
+let exclusiveAudioOwnerKey: string | null = null
+/** Store keys we force-muted so we can restore them when the owner releases. */
+const exclusiveAudioVictimKeys = new Set<string>()
+
+function normalizeStoreKey(storeId: string): string {
+    return (storeId || "default").trim() || "default"
+}
+
+function restoreExclusiveVictimsAndClearOwner(): void {
+    exclusiveAudioOwnerKey = null
+    for (const vid of exclusiveAudioVictimKeys) {
+        const entry = registry.get(vid)
+        if (entry) entry.setStore({ muted: false })
+    }
+    exclusiveAudioVictimKeys.clear()
+}
+
 function createStoreEntry(): StoreEntry {
     const listeners = new Set<() => void>()
     let state = createInitialBunnyVideoState()
@@ -92,6 +110,46 @@ function getOrCreateStoreEntry(storeId: string): StoreEntry {
         registry.set(key, createStoreEntry())
     }
     return registry.get(key)!
+}
+
+/**
+ * Before this player plays audible output, mute every other registered player’s store
+ * so only one `storeId` has `muted: false` at a time (global exclusive audio).
+ * Tracks victims so `releaseExclusiveAudioIfOwner` can restore them when the owner stops.
+ */
+export function muteOtherStoresForExclusiveAudio(exceptStoreId: string): void {
+    const exceptKey = normalizeStoreKey(exceptStoreId)
+    if (exclusiveAudioOwnerKey !== null && exclusiveAudioOwnerKey !== exceptKey) {
+        const prevOwner = exclusiveAudioOwnerKey
+        restoreExclusiveVictimsAndClearOwner()
+        const prevEntry = registry.get(prevOwner)
+        if (prevEntry) prevEntry.setStore({ muted: true })
+    }
+    exclusiveAudioOwnerKey = exceptKey
+    exclusiveAudioVictimKeys.clear()
+    for (const [key, entry] of registry) {
+        if (key === exceptKey) continue
+        const snap = entry.getSnapshot()
+        if (!snap.muted) {
+            exclusiveAudioVictimKeys.add(key)
+            entry.setStore({ muted: true })
+        }
+    }
+}
+
+/**
+ * If this `storeId` is the current exclusive-audio owner, unmute everyone we muted for them
+ * (e.g. owner paused, ended, unmounted, or muted themselves).
+ */
+export function releaseExclusiveAudioIfOwner(storeId: string): void {
+    const key = normalizeStoreKey(storeId)
+    if (exclusiveAudioOwnerKey !== key) return
+    restoreExclusiveVictimsAndClearOwner()
+}
+
+/** Call when the user explicitly mutes this player so we do not auto-unmute them on owner release. */
+export function relinquishExclusiveAudioVictim(storeId: string): void {
+    exclusiveAudioVictimKeys.delete(normalizeStoreKey(storeId))
 }
 
 export function useBunnyVideoStore(storeId: string = "default"): readonly [

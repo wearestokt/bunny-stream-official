@@ -46,6 +46,10 @@ function loadHlsJs(): Promise<HlsConstructor | null> {
     })
 }
 
+/**
+ * Bunny’s **primary** poster at `thumbnail.jpg` (the library “thumbnail” / cover).
+ * `thumbnail_1.jpg`, `thumbnail_2.jpg`, … are indexed preview stills and are not guaranteed to be t=0.
+ */
 function getThumbnailUrl(
     libraryId: string,
     videoId: string,
@@ -53,9 +57,9 @@ function getThumbnailUrl(
 ): string {
     if (pullZoneHostname?.trim()) {
         const host = pullZoneHostname.replace(/^https?:\/\//, "").split("/")[0].trim()
-        return `https://${host}/${videoId}/thumbnail_1.jpg`
+        return `https://${host}/${videoId}/thumbnail.jpg`
     }
-    return `https://vz-${libraryId}.b-cdn.net/${videoId}/thumbnail_1.jpg`
+    return `https://vz-${libraryId}.b-cdn.net/${videoId}/thumbnail.jpg`
 }
 
 /**
@@ -356,6 +360,15 @@ export function BunnyVideoPlayer(props: {
     playOnHover?: boolean
     previewOnCanvas?: boolean
     lazyLoad?: boolean
+    /**
+     * With Lazy Load on: `viewport` mounts when near/in view (default). `interaction` mounts only after the first
+     * pointer hover or press on this player — best for dense grids (many videos on one page).
+     */
+    deferVideoUntil?: "viewport" | "interaction"
+    /** Lazy viewport observer `rootMargin` (viewport mode only). Default `100px`. Use `0px` to avoid preloading off-screen cards. */
+    lazyRootMargin?: string
+    /** Minimum visible fraction (0–1) before lazy viewport mode mounts. `0` = first pixel (default). Try `0.1`–`0.25` on portfolios. */
+    lazyLoadMinRatio?: number
     /** Pause playback when the player leaves the viewport; resume when it returns if it was playing. Helps CPU/GPU with many videos. */
     pauseWhenOutOfView?: boolean
     fit?: "cover" | "contain" | "fill"
@@ -381,13 +394,20 @@ export function BunnyVideoPlayer(props: {
         playOnHover = false,
         previewOnCanvas = false,
         lazyLoad = false,
+        deferVideoUntil = "viewport",
+        lazyRootMargin = "100px",
+        lazyLoadMinRatio = 0,
         pauseWhenOutOfView = true,
         fit = "cover",
-    quality = "auto",
-    storeId = "default",
-    style,
-    children,
-} = props
+        quality = "auto",
+        storeId = "default",
+        style,
+        children,
+    } = props
+
+    const lazyMarginResolved = lazyRootMargin?.trim() || "100px"
+    /** Framer control is 0–100 (% of element visible); IO uses 0–1. */
+    const lazyMinRatioResolved = Math.min(1, Math.max(0, (lazyLoadMinRatio ?? 0) / 100))
 
     const videoRef = useRef<HTMLVideoElement>(null)
     const programmaticPauseRef = useRef(false)
@@ -421,6 +441,9 @@ export function BunnyVideoPlayer(props: {
         resumePlayAfterVisibleRef.current = false
     }, [store.play])
     const [showPoster, setShowPoster] = useState(true)
+    /** When no Framer Poster: decoded first video frame, else Bunny `thumbnail.jpg` fallback. */
+    const [firstFramePosterUrl, setFirstFramePosterUrl] = useState<string | null>(null)
+    const firstFramePosterUrlRef = useRef<string | null>(null)
     const [videoError, setVideoError] = useState(false)
 
     const pauseVideoProgrammatic = (v: HTMLVideoElement) => {
@@ -432,7 +455,6 @@ export function BunnyVideoPlayer(props: {
     }
 
     const isCanvas = RenderTarget.current() === RenderTarget.canvas
-    const isFramerBuilderPreview = RenderTarget.current() === RenderTarget.preview
     const shouldLoadVideo = !isCanvas || previewOnCanvas
     const showStaticFirstFrame = isCanvas && !previewOnCanvas && !poster
 
@@ -440,6 +462,13 @@ export function BunnyVideoPlayer(props: {
     const readyToLoad = shouldLoadVideo && (!lazyLoad || inView)
 
     const streamUrl = libraryId && videoId ? buildStreamUrl(libraryId, videoId, pullZoneHostname) : ""
+
+    /** New video id on the same instance: require interaction again before mounting (published site only). */
+    useEffect(() => {
+        if (!lazyLoad || deferVideoUntil !== "interaction") return
+        if (RenderTarget.current() === RenderTarget.preview) return
+        setInView(false)
+    }, [streamUrl, lazyLoad, deferVideoUntil])
     /** Browsers allow autoplay when muted. Start muted, then unmute in `onPlaying` + interval (Autoplay on + Mute off, not play-on-hover). */
     const useLoudAutoplay = Boolean(autoplay && !muted && !playOnHover)
     const [loudPretendMuted, setLoudPretendMuted] = useState(
@@ -463,17 +492,70 @@ export function BunnyVideoPlayer(props: {
 
     /** Do not mount `<video>` until lazy viewport gate passes — avoids native `.m3u8` load + `onError` before HLS.js attaches. */
     const shouldMountVideo = shouldLoadVideo && Boolean(streamUrl) && (!lazyLoad || readyToLoad)
-    /** Default Bunny thumb on canvas, and in the Framer in-app Preview (Builder), where there is no poster otherwise → avoids a black box. Published site: still no default unless a Poster is set. */
     const bunnyPosterUrl =
         libraryId && videoId ? getThumbnailUrl(libraryId, videoId, pullZoneHostname) : ""
     const hasCustomPoster = Boolean(poster?.trim())
-    const posterForUi = hasCustomPoster
-        ? poster.trim()
-        : isCanvas || isFramerBuilderPreview
-          ? bunnyPosterUrl
-          : ""
+    const posterForUi = hasCustomPoster ? poster.trim() : firstFramePosterUrl || bunnyPosterUrl
     /** Avoid double Bunny image on canvas: PreviewPlaceholder already draws the default thumbnail. */
     const showPosterOverlay = showPoster && posterForUi && !showStaticFirstFrame
+
+    useEffect(() => {
+        if (hasCustomPoster || !shouldMountVideo || !streamUrl) {
+            if (firstFramePosterUrlRef.current) {
+                URL.revokeObjectURL(firstFramePosterUrlRef.current)
+                firstFramePosterUrlRef.current = null
+            }
+            setFirstFramePosterUrl(null)
+            return
+        }
+        const v = videoRef.current
+        if (!v) return
+        let cancelled = false
+        let didCapture = false
+        const captureIfStillAtStart = () => {
+            if (cancelled || didCapture) return
+            if (v.currentTime > 0.12) return
+            if (v.videoWidth < 2 || v.videoHeight < 2) return
+            didCapture = true
+            try {
+                const canvas = document.createElement("canvas")
+                canvas.width = v.videoWidth
+                canvas.height = v.videoHeight
+                const ctx = canvas.getContext("2d")
+                if (!ctx) return
+                ctx.drawImage(v, 0, 0)
+                canvas.toBlob(
+                    (blob) => {
+                        if (cancelled || !blob) return
+                        if (firstFramePosterUrlRef.current) {
+                            URL.revokeObjectURL(firstFramePosterUrlRef.current)
+                        }
+                        const u = URL.createObjectURL(blob)
+                        firstFramePosterUrlRef.current = u
+                        setFirstFramePosterUrl(u)
+                    },
+                    "image/jpeg",
+                    0.9
+                )
+            } catch {
+                didCapture = false
+            }
+        }
+        const onLoadedData = () => captureIfStillAtStart()
+        v.addEventListener("loadeddata", onLoadedData)
+        if (v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            queueMicrotask(captureIfStillAtStart)
+        }
+        return () => {
+            cancelled = true
+            v.removeEventListener("loadeddata", onLoadedData)
+            if (firstFramePosterUrlRef.current) {
+                URL.revokeObjectURL(firstFramePosterUrlRef.current)
+                firstFramePosterUrlRef.current = null
+            }
+            setFirstFramePosterUrl(null)
+        }
+    }, [hasCustomPoster, shouldMountVideo, streamUrl, loudAutoplayKey])
 
     useLayoutEffect(() => {
         const inFramerBuilderPreview = RenderTarget.current() === RenderTarget.preview
@@ -482,7 +564,8 @@ export function BunnyVideoPlayer(props: {
         if (inFramerBuilderPreview && lazyLoad) {
             setInView(true)
         }
-        const needLazyObserver = lazyLoad && !inFramerBuilderPreview
+        const needLazyObserver =
+            lazyLoad && !inFramerBuilderPreview && deferVideoUntil !== "interaction"
         const needVisibilityObserver = pauseWhenOutOfView && !inFramerBuilderPreview
         if (!needLazyObserver && !needVisibilityObserver) return
 
@@ -495,9 +578,12 @@ export function BunnyVideoPlayer(props: {
         if (needLazyObserver) {
             const lazyObs = new IntersectionObserver(
                 ([entry]) => {
-                    if (entry?.isIntersecting) setInView(true)
+                    if (!entry?.isIntersecting) return
+                    const ratio = entry.intersectionRatio ?? 0
+                    if (ratio < lazyMinRatioResolved) return
+                    setInView(true)
                 },
-                { root: null, rootMargin: "100px", threshold: 0 }
+                { root: null, rootMargin: lazyMarginResolved, threshold: 0 }
             )
             lazyObs.observe(el)
             observers.push(lazyObs)
@@ -547,7 +633,37 @@ export function BunnyVideoPlayer(props: {
         return () => {
             for (const o of observers) o.disconnect()
         }
-    }, [lazyLoad, pauseWhenOutOfView, setStore])
+    }, [
+        lazyLoad,
+        deferVideoUntil,
+        lazyMarginResolved,
+        lazyMinRatioResolved,
+        pauseWhenOutOfView,
+        setStore,
+    ])
+
+    /** Lazy + interaction: mount `<video>` only after pointer hover or press (not Framer Preview — that keeps viewport lazy). */
+    useLayoutEffect(() => {
+        const inFramerBuilderPreview = RenderTarget.current() === RenderTarget.preview
+        if (inFramerBuilderPreview || !lazyLoad || deferVideoUntil !== "interaction") return
+        const el = containerRef.current
+        if (!el) return
+        let done = false
+        const activate = () => {
+            if (done) return
+            done = true
+            setInView(true)
+            el.removeEventListener("pointerenter", activate)
+            el.removeEventListener("pointerdown", activate)
+        }
+        el.addEventListener("pointerenter", activate, { passive: true })
+        el.addEventListener("pointerdown", activate, { passive: true })
+        return () => {
+            done = true
+            el.removeEventListener("pointerenter", activate)
+            el.removeEventListener("pointerdown", activate)
+        }
+    }, [lazyLoad, deferVideoUntil, streamUrl])
 
     /**
      * Re-arm muted→unmute only when the player actually needs the trick (key change: new video or Framer prop flip).
@@ -1108,6 +1224,10 @@ export function BunnyVideoPlayer(props: {
 
     const handleTapToPlay = () => {
         if (!tapToPlay || !shouldLoadVideo || store.fullscreen) return
+        if (lazyLoad && deferVideoUntil === "interaction" && !inView) {
+            setInView(true)
+            return
+        }
         if (loudPretendMuted) {
             if (loudUnmuteTimeoutRef.current) {
                 clearTimeout(loudUnmuteTimeoutRef.current)
@@ -1228,6 +1348,11 @@ export function BunnyVideoPlayer(props: {
                 <>
                     <video
                         ref={videoRef}
+                        crossOrigin={
+                            !hasCustomPoster && shouldMountVideo && streamUrl
+                                ? "anonymous"
+                                : undefined
+                        }
                         poster={posterForUi || undefined}
                         preload={lazyLoad ? "metadata" : "auto"}
                         loop={loop}
@@ -1288,6 +1413,9 @@ BunnyVideoPlayer.defaultProps = {
     playOnHover: false,
     previewOnCanvas: false,
     lazyLoad: false,
+    deferVideoUntil: "viewport" as const,
+    lazyRootMargin: "100px",
+    lazyLoadMinRatio: 0,
     pauseWhenOutOfView: true,
     fit: "cover" as const,
     quality: "auto" as const,
@@ -1349,7 +1477,7 @@ addPropertyControls(BunnyVideoPlayer, {
         step: 0.5,
         unit: "s",
         defaultValue: 3,
-        hidden: (props) => !props.hideControlsOnIdle,
+        hidden: (props: { hideControlsOnIdle?: boolean }) => !props.hideControlsOnIdle,
         description: "Seconds of idle time before controls vanish.",
     },
     quality: {
@@ -1380,7 +1508,40 @@ addPropertyControls(BunnyVideoPlayer, {
         enabledTitle: "On",
         disabledTitle: "Off",
         description:
-            "Load the video when the player enters the viewport. Reduces initial weight when many players are off-screen.",
+            "When on, the stream mounts only after the gate below (viewport or interaction). On dense grids many cards can still be in view at once — use Defer until + Min visible % or 0px margin to avoid loading every tile at once.",
+    },
+    deferVideoUntil: {
+        type: ControlType.Enum,
+        title: "Defer until",
+        options: ["viewport", "interaction"],
+        optionTitles: ["Viewport", "Interaction"],
+        defaultValue: "viewport",
+        hidden: (props: { lazyLoad?: boolean }) => !props.lazyLoad,
+        description:
+            "Viewport: mount when this player intersects the viewport (see Lazy margin / Min visible %). Interaction: poster only until the user hovers or presses this player — best for portfolio grids and many videos on one page. Framer Preview still loads so you can edit.",
+    },
+    lazyRootMargin: {
+        type: ControlType.String,
+        title: "Lazy margin",
+        defaultValue: "100px",
+        placeholder: "100px",
+        hidden: (props: { lazyLoad?: boolean; deferVideoUntil?: string }) =>
+            !props.lazyLoad || props.deferVideoUntil === "interaction",
+        description:
+            "IntersectionObserver rootMargin for Viewport mode only (e.g. 0px = no preload outside the viewport).",
+    },
+    lazyLoadMinRatio: {
+        type: ControlType.Number,
+        title: "Min visible %",
+        min: 0,
+        max: 100,
+        step: 5,
+        defaultValue: 0,
+        displayStepper: true,
+        hidden: (props: { lazyLoad?: boolean; deferVideoUntil?: string }) =>
+            !props.lazyLoad || props.deferVideoUntil === "interaction",
+        description:
+            "Minimum percent of this player that must be visible before Viewport mode mounts the video. 0 = first visible pixel. Try 10–25 on grids so only mostly-visible tiles load.",
     },
     pauseWhenOutOfView: {
         type: ControlType.Boolean,

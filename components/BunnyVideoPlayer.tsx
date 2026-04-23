@@ -1,10 +1,14 @@
 import { addPropertyControls, ControlType, RenderTarget } from "framer"
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import {
+    claimAudioFloor,
     createInitialBunnyVideoState,
-    muteOtherStoresForExclusiveAudio,
-    releaseExclusiveAudioIfOwner,
+    getAudioFloorOwner,
+    normalizeStoreKey,
+    releaseAudioFloor,
     reportControlHover,
+    subscribeAudioFloor,
+    subscribeLoudAutoplayGestureRetry,
     useBunnyVideoHoverRef,
     useBunnyVideoStore,
 } from "./BunnyVideoStore.tsx"
@@ -423,18 +427,31 @@ export function BunnyVideoPlayer(props: {
     const playRef = useRef(false)
     /** If we paused because the player left the viewport, resume when it returns (if still "playing"). */
     const resumePlayAfterVisibleRef = useRef(false)
+    /** Latest `IntersectionObserver` “visible” for Pause Off-Screen; stays `true` when that observer is disabled. */
+    const playerIntersectingRef = useRef(true)
     /** Last pointer position (viewport) — used when Play on Hover + carousel moves the player without firing pointerleave. */
     const lastPointerClientRef = useRef({ x: 0, y: 0 })
     const [store, setStore] = useBunnyVideoStore(storeId)
     const hoverLeaveTimeoutRef = useBunnyVideoHoverRef(storeId)
     const prevStoreIdRef = useRef(storeId)
     useEffect(() => {
-        if (prevStoreIdRef.current !== storeId) {
-            prevStoreIdRef.current = storeId
-            setStore(createInitialBunnyVideoState())
-        }
-    }, [storeId, setStore])
+        if (prevStoreIdRef.current === storeId) return
+        releaseAudioFloor(prevStoreIdRef.current)
+        prevStoreIdRef.current = storeId
+        /* Same component, new videoId/storeId: reset per-video state but preserve "autoplay means play now". */
+        const next = createInitialBunnyVideoState()
+        if (autoplay && !playOnHover) next.play = true
+        setStore(next)
+    }, [storeId, setStore, autoplay, playOnHover])
     playRef.current = store.play
+    const storeRef = useRef(store)
+    storeRef.current = store
+    const autoplayRef = useRef(autoplay)
+    autoplayRef.current = autoplay
+    const framerMutedRef = useRef(muted)
+    framerMutedRef.current = muted
+    const playOnHoverRef = useRef(playOnHover)
+    playOnHoverRef.current = playOnHover
     const controlsVisibleRef = useRef(store.controlsVisible)
     controlsVisibleRef.current = store.controlsVisible
     /** Clear "resume when visible" once playback is on; does not run when `play` is false (so scroll-away keeps the flag). */
@@ -442,28 +459,6 @@ export function BunnyVideoPlayer(props: {
         if (!store.play) return
         resumePlayAfterVisibleRef.current = false
     }, [store.play])
-
-    useEffect(() => {
-        return () => releaseExclusiveAudioIfOwner(storeId)
-    }, [storeId])
-
-    useEffect(() => {
-        if (!store.play || store.muted) releaseExclusiveAudioIfOwner(storeId)
-    }, [store.play, store.muted, storeId])
-
-    /** When this player starts playing again while unmuted, re-apply exclusive mute to others. */
-    const prevPlayForExclusiveRef = useRef<boolean | null>(null)
-    useEffect(() => {
-        if (prevPlayForExclusiveRef.current === null) {
-            prevPlayForExclusiveRef.current = store.play
-            return
-        }
-        const wasPlaying = prevPlayForExclusiveRef.current
-        prevPlayForExclusiveRef.current = store.play
-        if (store.play && !wasPlaying && !store.muted) {
-            muteOtherStoresForExclusiveAudio(storeId)
-        }
-    }, [store.play, store.muted, storeId])
 
     const [showPoster, setShowPoster] = useState(true)
     /** When no Framer Poster: decoded first video frame, else Bunny `thumbnail.jpg` fallback. */
@@ -517,6 +512,19 @@ export function BunnyVideoPlayer(props: {
 
     /** Do not mount `<video>` until lazy viewport gate passes — avoids native `.m3u8` load + `onError` before HLS.js attaches. */
     const shouldMountVideo = shouldLoadVideo && Boolean(streamUrl) && (!lazyLoad || readyToLoad)
+    const shouldMountVideoRef = useRef(shouldMountVideo)
+    shouldMountVideoRef.current = shouldMountVideo
+
+    /** Loud autoplay + unmute: claim LIFO floor whenever this tile should be audible; release when not. */
+    useEffect(() => {
+        if (!autoplay || muted || playOnHover || !shouldMountVideo) {
+            releaseAudioFloor(storeId)
+            return
+        }
+        claimAudioFloor(storeId)
+        return () => releaseAudioFloor(storeId)
+    }, [autoplay, muted, playOnHover, shouldMountVideo, storeId, streamUrl])
+
     const bunnyPosterUrl =
         libraryId && videoId ? getThumbnailUrl(libraryId, videoId, pullZoneHostname) : ""
     const hasCustomPoster = Boolean(poster?.trim())
@@ -624,6 +632,7 @@ export function BunnyVideoPlayer(props: {
                     if (!entry) return
                     const visible =
                         entry.isIntersecting === true || (entry.intersectionRatio ?? 0) > 0
+                    playerIntersectingRef.current = visible
                     if (visible) {
                         if (resumePlayAfterVisibleRef.current) {
                             resumePlayAfterVisibleRef.current = false
@@ -631,6 +640,20 @@ export function BunnyVideoPlayer(props: {
                             requestAnimationFrame(() => {
                                 const v = videoRef.current
                                 if (v) {
+                                    v.playbackRate = 1
+                                    void v.play().catch(() => {})
+                                }
+                            })
+                        } else if (
+                            storeRef.current.play &&
+                            autoplayRef.current &&
+                            !playOnHoverRef.current &&
+                            !framerMutedRef.current
+                        ) {
+                            /* Store says play (e.g. autoplay) but element can stay paused (policy / hand-off). */
+                            requestAnimationFrame(() => {
+                                const v = videoRef.current
+                                if (v?.paused) {
                                     v.playbackRate = 1
                                     void v.play().catch(() => {})
                                 }
@@ -722,7 +745,7 @@ export function BunnyVideoPlayer(props: {
     useLayoutEffect(() => {
         if (playOnHover || !autoplay || !shouldLoadVideo || !shouldMountVideo) return
         setStore({ play: true })
-    }, [autoplay, playOnHover, shouldLoadVideo, shouldMountVideo, setStore])
+    }, [autoplay, playOnHover, shouldLoadVideo, shouldMountVideo, setStore, streamUrl, storeId])
 
     useEffect(() => {
         if (store.muted) {
@@ -730,13 +753,43 @@ export function BunnyVideoPlayer(props: {
                 clearTimeout(loudUnmuteTimeoutRef.current)
                 loudUnmuteTimeoutRef.current = null
             }
+            /* Do not clear loud fake-mute when another player holds the audio floor (we are floor-muted). */
+            const owner = getAudioFloorOwner()
+            const my = normalizeStoreKey(storeId)
+            if (owner != null && owner !== my) return
             setLoudPretendMuted(false)
         }
-    }, [store.muted])
+    }, [store.muted, storeId])
 
     useEffect(() => {
+        const owner = getAudioFloorOwner()
+        const my = normalizeStoreKey(storeId)
+        if (owner !== null && owner !== my) return
         setStore({ muted })
-    }, [muted, setStore])
+    }, [muted, setStore, storeId])
+
+    /**
+     * When the floor empties, restore Framer mute. When we become owner, nudge playback back
+     * on ONLY if the store still wants it (user pause sets `store.play = false`; respect that).
+     */
+    useEffect(() => {
+        return subscribeAudioFloor((owner) => {
+            const my = normalizeStoreKey(storeId)
+            if (owner == null) {
+                setStore({ muted: framerMutedRef.current })
+                return
+            }
+            if (owner !== my) return
+            if (!storeRef.current.play) return
+            requestAnimationFrame(() => {
+                const v = videoRef.current
+                if (v?.paused) {
+                    v.playbackRate = 1
+                    void v.play().catch(() => {})
+                }
+            })
+        })
+    }, [storeId, setStore])
 
     useEffect(() => {
         const hls = hlsRef.current
@@ -949,9 +1002,6 @@ export function BunnyVideoPlayer(props: {
         }
     }, [useLoudAutoplay, store.play, loudPretendMuted, store.ready])
 
-    const storeRef = useRef(store)
-    storeRef.current = store
-
     const scheduleLoudAutoplayUnmute = useCallback(() => {
         if (!useLoudAutoplayRef.current || !loudPretendMutedRef.current) return
         if (loudUnmuteTimeoutRef.current != null) return
@@ -970,19 +1020,22 @@ export function BunnyVideoPlayer(props: {
             }
             loudUnmuteSpuriousPauseGuardRef.current = true
             const vol = (storeRef.current.volume ?? 100) / 100
-            muteOtherStoresForExclusiveAudio(storeId)
-            el.muted = false
-            el.volume = vol
-            el.playbackRate = 1
-            void el.play().catch(() => {})
+            claimAudioFloor(storeId)
+            const playUnmuted = (media: HTMLVideoElement) => {
+                media.muted = false
+                media.volume = vol
+                media.playbackRate = 1
+                void Promise.resolve(media.play()).catch(() => {
+                    loudPretendMutedRef.current = true
+                    setLoudPretendMuted(true)
+                    media.muted = true
+                    void media.play().catch(() => {})
+                })
+            }
+            playUnmuted(el)
             requestAnimationFrame(() => {
                 const v = videoRef.current
-                if (v) {
-                    v.muted = false
-                    v.volume = vol
-                    v.playbackRate = 1
-                    void v.play().catch(() => {})
-                }
+                if (v) playUnmuted(v)
             })
             setLoudPretendMuted(false)
             setStore({ play: true })
@@ -1003,26 +1056,37 @@ export function BunnyVideoPlayer(props: {
     }, [])
 
     useEffect(() => {
-        if (playOnHover || !autoplay || muted || !shouldMountVideo) return
-        const onPageClick = () => {
+        if (!useLoudAutoplay || !shouldMountVideo) return
+        const onUserActivation = () => {
+            if (playOnHoverRef.current || !useLoudAutoplayRef.current || !shouldMountVideoRef.current)
+                return
+            const v = videoRef.current
+            const s = storeRef.current
+            if (!v || !s.play) return
             if (loudUnmuteTimeoutRef.current) {
                 clearTimeout(loudUnmuteTimeoutRef.current)
                 loudUnmuteTimeoutRef.current = null
             }
-            setLoudPretendMuted((m) => (m ? false : m))
-            const v = videoRef.current
-            const s = storeRef.current
-            if (!v || !s.play) return
-            if (!v.paused) return
-            muteOtherStoresForExclusiveAudio(storeId)
+            if (loudAutoplayBruteIntervalRef.current) {
+                clearInterval(loudAutoplayBruteIntervalRef.current)
+                loudAutoplayBruteIntervalRef.current = null
+            }
+            loudPretendMutedRef.current = false
+            setLoudPretendMuted(false)
+            claimAudioFloor(storeId)
             v.muted = false
             v.volume = s.volume / 100
             v.playbackRate = 1
-            void v.play().catch(() => {})
+            void v.play().catch(() => {
+                /* Browser still refuses unmuted: revert to loud-muted retry so we try again next gesture. */
+                loudPretendMutedRef.current = true
+                setLoudPretendMuted(true)
+                v.muted = true
+                void v.play().catch(() => {})
+            })
         }
-        window.addEventListener("click", onPageClick, { once: true, passive: true, capture: false })
-        return () => window.removeEventListener("click", onPageClick, false)
-    }, [autoplay, muted, playOnHover, shouldMountVideo, storeId])
+        return subscribeLoudAutoplayGestureRetry(onUserActivation)
+    }, [useLoudAutoplay, shouldMountVideo, storeId])
 
     useEffect(() => {
         if (!autoplay || playOnHover) return
@@ -1082,8 +1146,6 @@ export function BunnyVideoPlayer(props: {
         }
     }, [isCanvas, hideControlsOnIdle, controlsHideDelay, setStore])
 
-    const playOnHoverRef = useRef(playOnHover)
-    playOnHoverRef.current = playOnHover
     const shouldLoadVideoRef = useRef(shouldLoadVideo)
     shouldLoadVideoRef.current = shouldLoadVideo
 
@@ -1163,7 +1225,12 @@ export function BunnyVideoPlayer(props: {
         return () => cancelAnimationFrame(rafId)
     }, [playOnHover, shouldMountVideo, store.play, setStore])
 
-    const onPlay = useCallback(() => setStore({ play: true }), [setStore])
+    const onPlay = useCallback(() => {
+        setStore({ play: true })
+        const s = storeRef.current
+        const loudStillPretend = useLoudAutoplayRef.current && loudPretendMutedRef.current
+        if (!s.muted && !loudStillPretend) claimAudioFloor(storeId)
+    }, [setStore, storeId])
     const onVideoPlaying = useCallback(() => {
         setStore({ play: true })
         scheduleLoudAutoplayUnmute()
@@ -1172,27 +1239,36 @@ export function BunnyVideoPlayer(props: {
         if (programmaticPauseRef.current) return
         if (loudUnmuteSpuriousPauseGuardRef.current) {
             const v = videoRef.current
-            if (v && !document.hidden) {
+            if (v && !document.hidden && storeRef.current.play) {
                 v.playbackRate = 1
                 void v.play().catch(() => {})
             }
             return
         }
         if (document.hidden) {
-            releaseExclusiveAudioIfOwner(storeId)
             setStore({ play: false })
             return
         }
-        if (autoplay && !muted && !playOnHover && !storeRef.current.fullscreen) {
+        /* Auto-resume loud-autoplay ONLY when the store still wants play (user pause clears it). */
+        if (
+            autoplay &&
+            !muted &&
+            !playOnHover &&
+            !storeRef.current.fullscreen &&
+            storeRef.current.play
+        ) {
+            const v = videoRef.current
+            if (v?.paused) {
+                v.playbackRate = 1
+                void v.play().catch(() => {})
+            }
             return
         }
-        releaseExclusiveAudioIfOwner(storeId)
         setStore({ play: false })
-    }, [setStore, autoplay, muted, playOnHover, storeId])
+    }, [setStore, autoplay, muted, playOnHover])
     const onEnded = useCallback(() => {
-        releaseExclusiveAudioIfOwner(storeId)
         setStore({ ended: true })
-    }, [setStore, storeId])
+    }, [setStore])
     const onSeeked = useCallback(() => setStore({ seeked: true }), [setStore])
     const onError = useCallback(() => {
         setVideoError(true)
@@ -1269,7 +1345,7 @@ export function BunnyVideoPlayer(props: {
         }
         const video = videoRef.current
         if (video && autoplay && !muted && store.play && video.paused) {
-            muteOtherStoresForExclusiveAudio(storeId)
+            claimAudioFloor(storeId)
             video.muted = false
             video.volume = store.volume / 100
             video.playbackRate = 1
@@ -1583,13 +1659,13 @@ addPropertyControls(BunnyVideoPlayer, {
         disabledTitle: "Off",
         defaultValue: true,
         description:
-            "Pause when this player leaves the viewport and resume when it returns (if it was playing). Reduces load with many videos.",
+            "Pause when this player leaves the viewport and resume when it returns (if it was playing). Reduces load with many videos. For carousels with Autoplay + unmuted, turn Off so inactive slides stay playing (muted via Store ID / exclusive audio) and can regain sound when they return without a fresh tap.",
     },
     storeId: {
         type: ControlType.String,
         title: "Store ID",
         defaultValue: "default",
         description:
-            "Same id on every control for this video. Duplicate slides may share one id; play state stays linked.\n\nUse a different Store ID per video on the same page so only one can be unmuted at a time (others auto-mute when you unmute another).\n\nMade by [Stōkt](https://wearestokt.com/)",
+            "Same id on every control for this video. Duplicate slides may share one id; play state stays linked.\n\nUse a different Store ID per video on the same page: only the latest autoplay-unmuted player is audible; when it unmounts or mutes, sound returns to the previous one (audio floor stack).\n\nMade by [Stōkt](https://wearestokt.com/)",
     },
 })

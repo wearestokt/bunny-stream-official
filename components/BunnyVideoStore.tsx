@@ -68,22 +68,69 @@ type StoreEntry = {
 
 const registry = new Map<string, StoreEntry>()
 
-/** Last player that called `muteOtherStoresForExclusiveAudio` (the one “holding” exclusive sound). */
-let exclusiveAudioOwnerKey: string | null = null
-/** Store keys we force-muted so we can restore them when the owner releases. */
-const exclusiveAudioVictimKeys = new Set<string>()
-
-function normalizeStoreKey(storeId: string): string {
+export function normalizeStoreKey(storeId: string): string {
     return (storeId || "default").trim() || "default"
 }
 
-function restoreExclusiveVictimsAndClearOwner(): void {
-    exclusiveAudioOwnerKey = null
-    for (const vid of exclusiveAudioVictimKeys) {
-        const entry = registry.get(vid)
-        if (entry) entry.setStore({ muted: false })
+/** LIFO stack of normalized storeIds; last entry is the sole audible owner. */
+const audioFloor: string[] = []
+const audioFloorSubs = new Set<(ownerKey: string | null) => void>()
+
+export function getAudioFloorOwner(): string | null {
+    if (audioFloor.length === 0) return null
+    return audioFloor[audioFloor.length - 1] ?? null
+}
+
+function notifyAudioFloorSubs(): void {
+    const owner = getAudioFloorOwner()
+    for (const fn of audioFloorSubs) {
+        try {
+            fn(owner)
+        } catch {
+            /* ignore */
+        }
     }
-    exclusiveAudioVictimKeys.clear()
+}
+
+function applyAudioFloorToStores(): void {
+    const owner = getAudioFloorOwner()
+    if (owner == null) {
+        notifyAudioFloorSubs()
+        return
+    }
+    for (const [key, entry] of registry) {
+        const floorMuted = normalizeStoreKey(key) !== owner
+        const snap = entry.getSnapshot()
+        if (snap.muted !== floorMuted) {
+            entry.setStore({ muted: floorMuted })
+        }
+    }
+    notifyAudioFloorSubs()
+}
+
+/** Move this store to the top of the audio floor (sole audible). */
+export function claimAudioFloor(storeId: string): void {
+    const key = normalizeStoreKey(storeId)
+    const i = audioFloor.indexOf(key)
+    if (i >= 0) audioFloor.splice(i, 1)
+    audioFloor.push(key)
+    applyAudioFloorToStores()
+}
+
+/** Remove this store from the floor; previous claimant becomes owner if any remain. */
+export function releaseAudioFloor(storeId: string): void {
+    const key = normalizeStoreKey(storeId)
+    const i = audioFloor.indexOf(key)
+    if (i < 0) return
+    audioFloor.splice(i, 1)
+    applyAudioFloorToStores()
+}
+
+export function subscribeAudioFloor(fn: (ownerKey: string | null) => void): () => void {
+    audioFloorSubs.add(fn)
+    return () => {
+        audioFloorSubs.delete(fn)
+    }
 }
 
 function createStoreEntry(): StoreEntry {
@@ -112,44 +159,43 @@ function getOrCreateStoreEntry(storeId: string): StoreEntry {
     return registry.get(key)!
 }
 
-/**
- * Before this player plays audible output, mute every other registered player’s store
- * so only one `storeId` has `muted: false` at a time (global exclusive audio).
- * Tracks victims so `releaseExclusiveAudioIfOwner` can restore them when the owner stops.
- */
-export function muteOtherStoresForExclusiveAudio(exceptStoreId: string): void {
-    const exceptKey = normalizeStoreKey(exceptStoreId)
-    if (exclusiveAudioOwnerKey !== null && exclusiveAudioOwnerKey !== exceptKey) {
-        const prevOwner = exclusiveAudioOwnerKey
-        restoreExclusiveVictimsAndClearOwner()
-        const prevEntry = registry.get(prevOwner)
-        if (prevEntry) prevEntry.setStore({ muted: true })
-    }
-    exclusiveAudioOwnerKey = exceptKey
-    exclusiveAudioVictimKeys.clear()
-    for (const [key, entry] of registry) {
-        if (key === exceptKey) continue
-        const snap = entry.getSnapshot()
-        if (!snap.muted) {
-            exclusiveAudioVictimKeys.add(key)
-            entry.setStore({ muted: true })
+const loudAutoplayGestureRetryCallbacks = new Set<() => void>()
+let loudAutoplayGestureDocAttached = false
+
+function dispatchLoudAutoplayGestureRetry(): void {
+    for (const fn of loudAutoplayGestureRetryCallbacks) {
+        try {
+            fn()
+        } catch {
+            /* ignore */
         }
     }
 }
 
-/**
- * If this `storeId` is the current exclusive-audio owner, unmute everyone we muted for them
- * (e.g. owner paused, ended, unmounted, or muted themselves).
- */
-export function releaseExclusiveAudioIfOwner(storeId: string): void {
-    const key = normalizeStoreKey(storeId)
-    if (exclusiveAudioOwnerKey !== key) return
-    restoreExclusiveVictimsAndClearOwner()
+function ensureLoudAutoplayGestureDocListener(): void {
+    if (loudAutoplayGestureDocAttached) return
+    loudAutoplayGestureDocAttached = true
+    document.addEventListener("pointerdown", dispatchLoudAutoplayGestureRetry, {
+        capture: true,
+        passive: true,
+    })
 }
 
-/** Call when the user explicitly mutes this player so we do not auto-unmute them on owner release. */
-export function relinquishExclusiveAudioVictim(storeId: string): void {
-    exclusiveAudioVictimKeys.delete(normalizeStoreKey(storeId))
+/**
+ * One document-level `pointerdown` (capture); every callback runs on each user activation.
+ * Lets any loud-autoplay instance retry `play()` after the first gesture — `once: true` on `window.click`
+ * only ever helped the first mounted player.
+ */
+export function subscribeLoudAutoplayGestureRetry(cb: () => void): () => void {
+    ensureLoudAutoplayGestureDocListener()
+    loudAutoplayGestureRetryCallbacks.add(cb)
+    return () => {
+        loudAutoplayGestureRetryCallbacks.delete(cb)
+        if (loudAutoplayGestureRetryCallbacks.size === 0 && loudAutoplayGestureDocAttached) {
+            document.removeEventListener("pointerdown", dispatchLoudAutoplayGestureRetry, true)
+            loudAutoplayGestureDocAttached = false
+        }
+    }
 }
 
 export function useBunnyVideoStore(storeId: string = "default"): readonly [

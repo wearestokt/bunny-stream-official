@@ -1,8 +1,8 @@
 import { addPropertyControls, ControlType } from "framer"
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
-    muteOtherStoresForExclusiveAudio,
-    relinquishExclusiveAudioVictim,
+    claimAudioFloor,
+    releaseAudioFloor,
     reportControlHover,
     useBunnyVideoHoverRef,
     useBunnyVideoStore,
@@ -228,8 +228,8 @@ export function BunnyVolumeSlider(props: {
             const v = resolvedMin + (pct / 100) * (resolvedMax - resolvedMin)
             const vol = Math.round(v)
             const willUnmute = vol > 0 && store.muted
-            if (willUnmute) muteOtherStoresForExclusiveAudio(storeId)
-            if (vol <= 0) relinquishExclusiveAudioVictim(storeId)
+            if (willUnmute) claimAudioFloor(storeId)
+            if (vol <= 0) releaseAudioFloor(storeId)
             setStore({ volume: vol, muted: vol <= 0 })
         },
         [resolvedMin, resolvedMax, setStore, store.muted, storeId]
@@ -281,10 +281,10 @@ export function BunnyVolumeSlider(props: {
                 store.volumeBeforeMute ??
                 (store.volume > 0 ? store.volume : 100)
             const restore = Math.max(resolvedMin, Math.min(resolvedMax, restoreFrom))
-            muteOtherStoresForExclusiveAudio(storeId)
+            claimAudioFloor(storeId)
             setStore({ muted: false, volume: restore > 0 ? restore : Math.max(1, resolvedMin) })
         } else {
-            relinquishExclusiveAudioVictim(storeId)
+            releaseAudioFloor(storeId)
             setStore({ muted: true, volume: 0, volumeBeforeMute: store.volume })
         }
     }

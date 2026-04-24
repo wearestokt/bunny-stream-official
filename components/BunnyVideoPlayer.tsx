@@ -515,6 +515,86 @@ export function BunnyVideoPlayer(props: {
     const shouldMountVideoRef = useRef(shouldMountVideo)
     shouldMountVideoRef.current = shouldMountVideo
 
+    /**
+     * Mobile (< 810px viewport) autoplay follows the industry-standard gate used by
+     * YouTube Shorts / Instagram Reels / Vimeo:
+     *   1. Wait for `window.load` (page's critical resources finished) + a short
+     *      settle delay so we never fight the initial render for bandwidth.
+     *   2. Wait for `canplaythrough` or ~5s of buffered lead before starting playback.
+     *   3. Skip autoplay entirely on Save-Data / 2g / slow-2g connections.
+     *   4. Explicit user gestures always play immediately (bypass the gate).
+     */
+    const isMobileRef = useRef(false)
+    useEffect(() => {
+        if (typeof window === "undefined") return
+        const mq = window.matchMedia("(max-width: 809px)")
+        const apply = () => {
+            isMobileRef.current = mq.matches
+        }
+        apply()
+        mq.addEventListener?.("change", apply)
+        return () => mq.removeEventListener?.("change", apply)
+    }, [])
+    const canPlayThroughRef = useRef(false)
+    const deferredAutoPlayRef = useRef(false)
+    /** Page load gate: mobile autoplay must not start before `window.load` (+ small settle). */
+    const pageLoadReadyRef = useRef(
+        typeof document !== "undefined" && document.readyState === "complete"
+    )
+    /** Returns `true` if we must skip mobile autoplay entirely (Save-Data or 2g/slow-2g). */
+    const shouldSkipMobileAutoplay = (): boolean => {
+        if (typeof navigator === "undefined") return false
+        const c = (navigator as unknown as { connection?: { saveData?: boolean; effectiveType?: string } })
+            .connection
+        if (!c) return false
+        if (c.saveData === true) return true
+        return c.effectiveType === "slow-2g" || c.effectiveType === "2g"
+    }
+    const tryReleaseDeferredAutoPlay = useCallback(() => {
+        if (!deferredAutoPlayRef.current) return
+        const v = videoRef.current
+        if (!v || !storeRef.current.play || !v.paused) return
+        if (!pageLoadReadyRef.current) return
+        if (!canPlayThroughRef.current && v.readyState < 4) return
+        deferredAutoPlayRef.current = false
+        v.playbackRate = 1
+        void v.play().catch(() => {})
+    }, [])
+    useEffect(() => {
+        if (typeof window === "undefined" || typeof document === "undefined") return
+        if (pageLoadReadyRef.current) return
+        let settleTimer: ReturnType<typeof setTimeout> | null = null
+        const onLoad = () => {
+            /* Short settle after `load` so post-load microtasks / analytics finish. */
+            settleTimer = window.setTimeout(() => {
+                pageLoadReadyRef.current = true
+                tryReleaseDeferredAutoPlay()
+            }, 300)
+        }
+        if (document.readyState === "complete") {
+            onLoad()
+        } else {
+            window.addEventListener("load", onLoad, { once: true })
+        }
+        return () => {
+            window.removeEventListener("load", onLoad)
+            if (settleTimer != null) clearTimeout(settleTimer)
+        }
+    }, [tryReleaseDeferredAutoPlay])
+    useEffect(() => {
+        canPlayThroughRef.current = false
+        deferredAutoPlayRef.current = false
+    }, [streamUrl])
+    /** Returns `true` if autoplay-style `video.play()` is safe to call right now. */
+    const canAutoPlayNow = (v: HTMLVideoElement | null): boolean => {
+        if (!isMobileRef.current) return true
+        if (shouldSkipMobileAutoplay()) return false
+        if (!pageLoadReadyRef.current) return false
+        if (canPlayThroughRef.current) return true
+        if (v && v.readyState >= 4 /* HAVE_ENOUGH_DATA */) return true
+        return false
+    }
+
     /** Loud autoplay + unmute: claim LIFO floor whenever this tile should be audible; release when not. */
     useEffect(() => {
         if (!autoplay || muted || playOnHover || !shouldMountVideo) {
@@ -639,10 +719,13 @@ export function BunnyVideoPlayer(props: {
                             setStore({ play: true })
                             requestAnimationFrame(() => {
                                 const v = videoRef.current
-                                if (v) {
-                                    v.playbackRate = 1
-                                    void v.play().catch(() => {})
+                                if (!v) return
+                                if (!canAutoPlayNow(v)) {
+                                    deferredAutoPlayRef.current = true
+                                    return
                                 }
+                                v.playbackRate = 1
+                                void v.play().catch(() => {})
                             })
                         } else if (
                             storeRef.current.play &&
@@ -653,10 +736,13 @@ export function BunnyVideoPlayer(props: {
                             /* Store says play (e.g. autoplay) but element can stay paused (policy / hand-off). */
                             requestAnimationFrame(() => {
                                 const v = videoRef.current
-                                if (v?.paused) {
-                                    v.playbackRate = 1
-                                    void v.play().catch(() => {})
+                                if (!v?.paused) return
+                                if (!canAutoPlayNow(v)) {
+                                    deferredAutoPlayRef.current = true
+                                    return
                                 }
+                                v.playbackRate = 1
+                                void v.play().catch(() => {})
                             })
                         }
                     } else if (playRef.current) {
@@ -783,10 +869,13 @@ export function BunnyVideoPlayer(props: {
             if (!storeRef.current.play) return
             requestAnimationFrame(() => {
                 const v = videoRef.current
-                if (v?.paused) {
-                    v.playbackRate = 1
-                    void v.play().catch(() => {})
+                if (!v?.paused) return
+                if (!canAutoPlayNow(v)) {
+                    deferredAutoPlayRef.current = true
+                    return
                 }
+                v.playbackRate = 1
+                void v.play().catch(() => {})
             })
         })
     }, [storeId, setStore])
@@ -918,8 +1007,13 @@ export function BunnyVideoPlayer(props: {
         }
 
         if (store.play) {
-            video.playbackRate = 1
-            video.play().catch(() => {})
+            if (canAutoPlayNow(video)) {
+                video.playbackRate = 1
+                video.play().catch(() => {})
+            } else {
+                /* Mobile + thin buffer: wait for `canplaythrough` instead of frame-stuttering. */
+                deferredAutoPlayRef.current = true
+            }
         } else {
             pauseVideoProgrammatic(video)
         }
@@ -991,6 +1085,11 @@ export function BunnyVideoPlayer(props: {
             if (!loudPretendMutedRef.current) return
             const v = videoRef.current
             if (!v) return
+            if (!canAutoPlayNow(v)) {
+                /* Mobile + thin buffer: stop hammering `play()` — it causes frame-by-frame stutter. */
+                deferredAutoPlayRef.current = true
+                return
+            }
             v.muted = true
             v.playbackRate = 1
             void v.play().catch(() => {})
@@ -1231,6 +1330,16 @@ export function BunnyVideoPlayer(props: {
         const loudStillPretend = useLoudAutoplayRef.current && loudPretendMutedRef.current
         if (!s.muted && !loudStillPretend) claimAudioFloor(storeId)
     }, [setStore, storeId])
+    /** Fired when the browser thinks it can play through without rebuffering. Release any deferred autoplay. */
+    const onVideoCanPlayThrough = useCallback(() => {
+        canPlayThroughRef.current = true
+        tryReleaseDeferredAutoPlay()
+    }, [tryReleaseDeferredAutoPlay])
+    /** Buffer under-ran mid-playback: re-gate autoplay on mobile until `canplaythrough` fires again. */
+    const onVideoWaiting = useCallback(() => {
+        if (!isMobileRef.current) return
+        canPlayThroughRef.current = false
+    }, [])
     const onVideoPlaying = useCallback(() => {
         setStore({ play: true })
         scheduleLoudAutoplayUnmute()
@@ -1240,8 +1349,12 @@ export function BunnyVideoPlayer(props: {
         if (loudUnmuteSpuriousPauseGuardRef.current) {
             const v = videoRef.current
             if (v && !document.hidden && storeRef.current.play) {
-                v.playbackRate = 1
-                void v.play().catch(() => {})
+                if (!canAutoPlayNow(v)) {
+                    deferredAutoPlayRef.current = true
+                } else {
+                    v.playbackRate = 1
+                    void v.play().catch(() => {})
+                }
             }
             return
         }
@@ -1259,8 +1372,12 @@ export function BunnyVideoPlayer(props: {
         ) {
             const v = videoRef.current
             if (v?.paused) {
-                v.playbackRate = 1
-                void v.play().catch(() => {})
+                if (!canAutoPlayNow(v)) {
+                    deferredAutoPlayRef.current = true
+                } else {
+                    v.playbackRate = 1
+                    void v.play().catch(() => {})
+                }
             }
             return
         }
@@ -1322,6 +1439,20 @@ export function BunnyVideoPlayer(props: {
         if (!v?.buffered?.length) return
         const buffered = v.buffered.end(v.buffered.length - 1)
         const duration = v.duration
+        /**
+         * Mobile autoplay fallback: some HLS streams never fire `canplaythrough`, so release the
+         * deferred autoplay once we have ~5s of buffer lead ahead of `currentTime`, or the full
+         * video fits in the buffer.
+         */
+        if (isMobileRef.current && !canPlayThroughRef.current && deferredAutoPlayRef.current) {
+            const lead = buffered - v.currentTime
+            const fullyBuffered =
+                Number.isFinite(duration) && duration > 0 && buffered >= duration - 0.1
+            if (lead >= 5 || fullyBuffered) {
+                canPlayThroughRef.current = true
+                tryReleaseDeferredAutoPlay()
+            }
+        }
         if (!Number.isFinite(duration) || duration <= 0) {
             setStore({ loadingPercent: 0 })
             return
@@ -1477,6 +1608,8 @@ export function BunnyVideoPlayer(props: {
                         onError={onError}
                         onTimeUpdate={onTimeUpdate}
                         onProgress={onProgress}
+                        onCanPlayThrough={onVideoCanPlayThrough}
+                        onWaiting={onVideoWaiting}
                         onLoadedMetadata={() => {
                             setStore({ ready: true, muted })
                             setShowPoster(false)

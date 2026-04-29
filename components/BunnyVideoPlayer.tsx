@@ -3,11 +3,16 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import {
     claimAudioFloor,
     createInitialBunnyVideoState,
+    ensureAudioUnlockGestureListener,
     getAudioFloorOwner,
+    getAudioUnlocked,
     normalizeStoreKey,
+    registerFullscreenHandler,
     releaseAudioFloor,
     reportControlHover,
+    setAudioUnlocked,
     subscribeAudioFloor,
+    subscribeAudioUnlocked,
     subscribeLoudAutoplayGestureRetry,
     useBunnyVideoHoverRef,
     useBunnyVideoStore,
@@ -17,6 +22,13 @@ import type { BunnyVideoStoreState } from "./BunnyVideoStore.tsx"
 const HLS_JS_URL = "https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js"
 /** After loud (fake-mute) autoplay actually starts, wait this long before unmuting so the browser keeps playback. */
 const LOUD_UNMUTE_DELAY_MS = 220
+/**
+ * Mobile: hold muted playback far longer before attempting the unmute flip so the
+ * native HLS decoder is fully warm. Flipping `muted` during iOS decoder warmup resets
+ * the audio pipeline and produces visible frame stutter; a ~1.5s dwell is the industry
+ * standard used by Reels / TikTok / Vimeo to avoid this.
+ */
+const MOBILE_LOUD_UNMUTE_DELAY_MS = 1500
 
 interface HlsInstance {
     loadSource: (url: string) => void
@@ -429,6 +441,15 @@ export function BunnyVideoPlayer(props: {
     const resumePlayAfterVisibleRef = useRef(false)
     /** Latest `IntersectionObserver` “visible” for Pause Off-Screen; stays `true` when that observer is disabled. */
     const playerIntersectingRef = useRef(true)
+    /**
+     * Ignore viewport-driven autoplay pause briefly after the visibility observer attaches.
+     * Safari (especially first cold load) often delivers an initial IntersectionObserver tick with
+     * `isIntersecting === false` before layout/size settles — that cleared `store.play` and looked like
+     * “autoplay only works after reload or interaction.”
+     */
+    const visibilityOovPauseGraceUntilRef = useRef(0)
+    /** First `playing` fired — before this, Safari may emit spurious `pause` during src/HLS attach. */
+    const heardPlayingOnceRef = useRef(false)
     /** Last pointer position (viewport) — used when Play on Hover + carousel moves the player without firing pointerleave. */
     const lastPointerClientRef = useRef({ x: 0, y: 0 })
     const [store, setStore] = useBunnyVideoStore(storeId)
@@ -489,13 +510,27 @@ export function BunnyVideoPlayer(props: {
         if (RenderTarget.current() === RenderTarget.preview) return
         setInView(false)
     }, [streamUrl, lazyLoad, deferVideoUntil])
-    /** Browsers allow autoplay when muted. Start muted, then unmute in `onPlaying` + interval (Autoplay on + Mute off, not play-on-hover). */
-    const useLoudAutoplay = Boolean(autoplay && !muted && !playOnHover)
+    /**
+     * Site-wide "audio unlocked" flag, tracked reactively so `useLoudAutoplay` below
+     * collapses to false the instant any user gesture promotes the session — every
+     * subsequent video switch then mounts with native `autoPlay` + unmuted directly,
+     * which is the only way to reliably get unmuted playback on route changes
+     * (JS-driven `.play()` outside a user-activation call stack is often throttled).
+     */
+    const [audioUnlockedState, setAudioUnlockedState] = useState(() => getAudioUnlocked())
+    /**
+     * Browsers allow autoplay when muted. Start muted, then unmute in `onPlaying` + interval
+     * (Autoplay on + Mute off, not play-on-hover) — but skip the whole dance once audio is
+     * unlocked for the session and rely on native unmuted autoplay instead.
+     */
+    const useLoudAutoplay = Boolean(autoplay && !muted && !playOnHover) && !audioUnlockedState
     const [loudPretendMuted, setLoudPretendMuted] = useState(
-        () => Boolean(autoplay && !muted && !playOnHover)
+        () => Boolean(autoplay && !muted && !playOnHover) && !getAudioUnlocked()
     )
     const loudPretendMutedRef = useRef(loudPretendMuted)
     const loudUnmuteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    /** Mobile scheduled-unmute can run before `readyState`/buffer are ready — bounded retries. */
+    const loudUnmuteMobileRetryCountRef = useRef(0)
     /** While true, `onPause` is ignored and we re-call play (browser can emit spurious pause when unmuting). */
     const loudUnmuteSpuriousPauseGuardRef = useRef(false)
     const loudAutoplayBruteIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -509,6 +544,20 @@ export function BunnyVideoPlayer(props: {
     const loudAutoplayKey = `${String(autoplay)}|${String(muted)}|${String(playOnHover)}|${streamUrl}`
     loudPretendMutedRef.current = loudPretendMuted
     useLoudAutoplayRef.current = useLoudAutoplay
+
+    /**
+     * When unmuted `play()` is rejected on the audio-unlocked path (`useLoudAutoplay === false`),
+     * React would keep forcing `muted={false}` on the `<video>` — we need a real state bit so
+     * we can fall back to muted playback + gesture unmute (same as loud-autoplay reject).
+     */
+    const [playbackMuteFallback, setPlaybackMuteFallback] = useState(false)
+    const playbackMuteFallbackRef = useRef(false)
+    playbackMuteFallbackRef.current = playbackMuteFallback
+
+    /** Safari can reject even muted `play()` (Low Power Mode, policy). Enables poster + gesture retry. */
+    const [autoplayBlocked, setAutoplayBlocked] = useState(false)
+    const autoplayBlockedRef = useRef(false)
+    autoplayBlockedRef.current = autoplayBlocked
 
     /** Do not mount `<video>` until lazy viewport gate passes — avoids native `.m3u8` load + `onError` before HLS.js attaches. */
     const shouldMountVideo = shouldLoadVideo && Boolean(streamUrl) && (!lazyLoad || readyToLoad)
@@ -524,13 +573,15 @@ export function BunnyVideoPlayer(props: {
      *   3. Skip autoplay entirely on Save-Data / 2g / slow-2g connections.
      *   4. Explicit user gestures always play immediately (bypass the gate).
      */
-    const isMobileRef = useRef(false)
+    const [isMobile, setIsMobile] = useState<boolean>(() =>
+        typeof window !== "undefined" && window.matchMedia("(max-width: 809px)").matches
+    )
+    const isMobileRef = useRef(isMobile)
+    isMobileRef.current = isMobile
     useEffect(() => {
         if (typeof window === "undefined") return
         const mq = window.matchMedia("(max-width: 809px)")
-        const apply = () => {
-            isMobileRef.current = mq.matches
-        }
+        const apply = () => setIsMobile(mq.matches)
         apply()
         mq.addEventListener?.("change", apply)
         return () => mq.removeEventListener?.("change", apply)
@@ -550,16 +601,61 @@ export function BunnyVideoPlayer(props: {
         if (c.saveData === true) return true
         return c.effectiveType === "slow-2g" || c.effectiveType === "2g"
     }
+    /**
+     * Extra settle delay after the browser reports it can play through. iPhone Safari's
+     * native HLS decoder stays warm-up-y for ~1s after `canplaythrough` / `readyState === 4`;
+     * calling `play()` before that settles produces visible jank on cold loads.
+     */
+    const mobileSettleDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const tryReleaseDeferredAutoPlay = useCallback(() => {
         if (!deferredAutoPlayRef.current) return
         const v = videoRef.current
         if (!v || !storeRef.current.play || !v.paused) return
         if (!pageLoadReadyRef.current) return
-        if (!canPlayThroughRef.current && v.readyState < 4) return
+        const mutedPlayback =
+            framerMutedRef.current ||
+            storeRef.current.muted ||
+            (useLoudAutoplayRef.current && loudPretendMutedRef.current) ||
+            playbackMuteFallbackRef.current
+        const minReady = mutedPlayback
+            ? HTMLMediaElement.HAVE_FUTURE_DATA
+            : HTMLMediaElement.HAVE_ENOUGH_DATA
+        if (!canPlayThroughRef.current && v.readyState < minReady) return
+        if (isMobileRef.current) {
+            if (mobileSettleDelayTimerRef.current != null) return
+            mobileSettleDelayTimerRef.current = window.setTimeout(() => {
+                mobileSettleDelayTimerRef.current = null
+                if (!deferredAutoPlayRef.current) return
+                const el = videoRef.current
+                if (!el || !storeRef.current.play || !el.paused) return
+                deferredAutoPlayRef.current = false
+                el.playbackRate = 1
+                void el.play().catch(() => {
+                    if (el.muted) setAutoplayBlocked(true)
+                })
+            }, 1000)
+            return
+        }
         deferredAutoPlayRef.current = false
         v.playbackRate = 1
-        void v.play().catch(() => {})
+        void v.play().catch(() => {
+            if (v.muted) setAutoplayBlocked(true)
+        })
     }, [])
+    useEffect(() => {
+        return () => {
+            if (mobileSettleDelayTimerRef.current != null) {
+                clearTimeout(mobileSettleDelayTimerRef.current)
+                mobileSettleDelayTimerRef.current = null
+            }
+        }
+    }, [])
+    useEffect(() => {
+        if (mobileSettleDelayTimerRef.current != null) {
+            clearTimeout(mobileSettleDelayTimerRef.current)
+            mobileSettleDelayTimerRef.current = null
+        }
+    }, [streamUrl])
     useEffect(() => {
         if (typeof window === "undefined" || typeof document === "undefined") return
         if (pageLoadReadyRef.current) return
@@ -581,25 +677,185 @@ export function BunnyVideoPlayer(props: {
             if (settleTimer != null) clearTimeout(settleTimer)
         }
     }, [tryReleaseDeferredAutoPlay])
-    useEffect(() => {
-        canPlayThroughRef.current = false
-        deferredAutoPlayRef.current = false
-    }, [streamUrl])
     /** Returns `true` if autoplay-style `video.play()` is safe to call right now. */
-    const canAutoPlayNow = (v: HTMLVideoElement | null): boolean => {
+    const canAutoPlayNow = useCallback((v: HTMLVideoElement | null): boolean => {
         if (!isMobileRef.current) return true
         if (shouldSkipMobileAutoplay()) return false
         if (!pageLoadReadyRef.current) return false
         if (canPlayThroughRef.current) return true
-        if (v && v.readyState >= 4 /* HAVE_ENOUGH_DATA */) return true
-        return false
-    }
+        const mutedPlayback =
+            framerMutedRef.current ||
+            storeRef.current.muted ||
+            (useLoudAutoplayRef.current && loudPretendMutedRef.current) ||
+            playbackMuteFallbackRef.current
+        const minReady = mutedPlayback
+            ? HTMLMediaElement.HAVE_FUTURE_DATA
+            : HTMLMediaElement.HAVE_ENOUGH_DATA
+        return Boolean(v && v.readyState >= minReady)
+    }, [])
 
-    /** Loud autoplay + unmute: claim LIFO floor whenever this tile should be audible; release when not. */
+    /**
+     * Session already has audio permission (`getAudioUnlocked`) but the `<video>` can still be
+     * left muted (floor store vs element, kickPlayback reject, or browser quirks). Re-assert
+     * `muted=false` for a few frames — one `play()` per frame at most, no store churn.
+     */
+    const audibleAssertRafRef = useRef(0)
+    const cancelAudibleAssertLoop = () => {
+        if (audibleAssertRafRef.current) {
+            cancelAnimationFrame(audibleAssertRafRef.current)
+            audibleAssertRafRef.current = 0
+        }
+    }
+    const scheduleAudibleAssertUntilHeard = useCallback(() => {
+        if (!getAudioUnlocked()) return
+        if (framerMutedRef.current) return
+        if (playOnHoverRef.current) return
+        cancelAudibleAssertLoop()
+        const maxFrames = 36
+        let n = 0
+        const step = () => {
+            audibleAssertRafRef.current = 0
+            if (++n > maxFrames) return
+            const v = videoRef.current
+            if (!v || !storeRef.current.play || v.paused) return
+            const owner = getAudioFloorOwner()
+            const my = normalizeStoreKey(storeId)
+            if (owner != null && owner !== my) return
+            if (storeRef.current.muted) return
+            if (!v.muted) return
+            v.muted = false
+            v.volume = (storeRef.current.volume ?? 100) / 100
+            v.playbackRate = 1
+            void v.play().catch(() => {})
+            audibleAssertRafRef.current = requestAnimationFrame(step)
+        }
+        audibleAssertRafRef.current = requestAnimationFrame(step)
+    }, [storeId])
+
+    useEffect(() => {
+        return () => cancelAudibleAssertLoop()
+    }, [])
+
+    useEffect(() => {
+        canPlayThroughRef.current = false
+        deferredAutoPlayRef.current = false
+        setPlaybackMuteFallback(false)
+        setAutoplayBlocked(false)
+        cancelAudibleAssertLoop()
+        heardPlayingOnceRef.current = false
+    }, [streamUrl])
+
+    const kickPlaybackRef = useRef<() => void>(() => {})
+    const kickPlayback = useCallback(() => {
+        const v = videoRef.current
+        if (!v) return
+        if (!storeRef.current.play) return
+        if (playOnHoverRef.current) return
+        if (!v.paused) return
+        if (!canAutoPlayNow(v)) {
+            deferredAutoPlayRef.current = true
+            return
+        }
+        const videoMuted =
+            framerMutedRef.current ||
+            storeRef.current.muted ||
+            (useLoudAutoplayRef.current && loudPretendMutedRef.current) ||
+            playbackMuteFallbackRef.current
+        v.playbackRate = 1
+        if (videoMuted) {
+            v.muted = true
+        } else {
+            v.muted = false
+            v.volume = (storeRef.current.volume ?? 100) / 100
+        }
+        const attemptedUnmuted = !videoMuted
+        void Promise.resolve(v.play())
+            .then(() => {
+                if (attemptedUnmuted) {
+                    setAudioUnlocked(true)
+                    setPlaybackMuteFallback(false)
+                    playbackMuteFallbackRef.current = false
+                }
+                const el = videoRef.current
+                if (el?.muted && getAudioUnlocked() && !framerMutedRef.current && !storeRef.current.muted) {
+                    scheduleAudibleAssertUntilHeard()
+                }
+            })
+            .catch(() => {
+                if (!attemptedUnmuted) {
+                    setAutoplayBlocked(true)
+                    return
+                }
+                if (getAudioUnlocked()) {
+                    scheduleAudibleAssertUntilHeard()
+                    window.setTimeout(() => {
+                        const el = videoRef.current
+                        if (!el?.muted) return
+                        playbackMuteFallbackRef.current = true
+                        setPlaybackMuteFallback(true)
+                        loudPretendMutedRef.current = true
+                        setLoudPretendMuted(true)
+                        el.muted = true
+                        el.playbackRate = 1
+                        void el.play().catch(() => {})
+                    }, 450)
+                    return
+                }
+                playbackMuteFallbackRef.current = true
+                setPlaybackMuteFallback(true)
+                loudPretendMutedRef.current = true
+                setLoudPretendMuted(true)
+                v.muted = true
+                v.playbackRate = 1
+                void v.play().catch(() => {})
+            })
+    }, [canAutoPlayNow, scheduleAudibleAssertUntilHeard])
+    kickPlaybackRef.current = kickPlayback
+
+    /**
+     * Bounded safety net: if `store.play` is true but the element is still paused with enough
+     * data, retry `kickPlayback` a few times (covers OOV races, bfcache return, Safari quirks).
+     */
+    useEffect(() => {
+        if (!shouldMountVideo || playOnHover) return
+        const v = videoRef.current
+        if (!v) return
+        let attempts = 0
+        const maxAttempts = 3
+        const start = Date.now()
+        const maxMs = 500
+        const trySafetyKick = () => {
+            if (Date.now() - start > maxMs) return
+            if (attempts >= maxAttempts) return
+            attempts += 1
+            if (!storeRef.current.play || !v.paused) return
+            if (v.readyState < 3 /* HAVE_FUTURE_DATA */) return
+            if (!canAutoPlayNow(v)) return
+            kickPlaybackRef.current()
+        }
+        const t0 = window.setTimeout(trySafetyKick, 0)
+        const t250 = window.setTimeout(trySafetyKick, 250)
+        const t500 = window.setTimeout(trySafetyKick, 500)
+        const onCanPlay = () => trySafetyKick()
+        v.addEventListener("canplay", onCanPlay)
+        return () => {
+            clearTimeout(t0)
+            clearTimeout(t250)
+            clearTimeout(t500)
+            v.removeEventListener("canplay", onCanPlay)
+        }
+    }, [streamUrl, shouldMountVideo, playOnHover, canAutoPlayNow])
+
+    /**
+     * Loud autoplay + unmute: claim LIFO floor whenever this tile should be audible; release when not.
+     * Always register an unmount cleanup — non-loud-autoplay players can still end up on the floor
+     * stack (e.g. user unmutes via the volume slider) and must be removed when they disappear, or
+     * they linger as phantom owners and prevent the previous claimant from getting the sound back.
+     */
     useEffect(() => {
         if (!autoplay || muted || playOnHover || !shouldMountVideo) {
             releaseAudioFloor(storeId)
-            return
+            return () => releaseAudioFloor(storeId)
         }
         claimAudioFloor(storeId)
         return () => releaseAudioFloor(storeId)
@@ -707,6 +963,7 @@ export function BunnyVideoPlayer(props: {
          * counts as intersecting. (Do not reuse the lazy observer's expanded root — that broke resume timing.)
          */
         if (needVisibilityObserver) {
+            visibilityOovPauseGraceUntilRef.current = Date.now() + 480
             const visibilityObs = new IntersectionObserver(
                 ([entry]) => {
                     if (!entry) return
@@ -746,6 +1003,7 @@ export function BunnyVideoPlayer(props: {
                             })
                         }
                     } else if (playRef.current) {
+                        if (Date.now() < visibilityOovPauseGraceUntilRef.current) return
                         if (loudPretendMutedRef.current) return
                         if (
                             loudOovUnmuteGuardUntilRef.current > 0 &&
@@ -774,6 +1032,7 @@ export function BunnyVideoPlayer(props: {
         lazyMinRatioResolved,
         pauseWhenOutOfView,
         setStore,
+        streamUrl,
     ])
 
     /** Lazy + interaction: mount `<video>` only after pointer hover or press (not Framer Preview — that keeps viewport lazy). */
@@ -815,12 +1074,52 @@ export function BunnyVideoPlayer(props: {
             return
         }
         if (prevLoudAutoplayKeyRef.current !== loudAutoplayKey) {
-            setLoudPretendMuted(true)
+            /**
+             * Audio already unlocked site-wide → start unmuted directly, no muted dance.
+             * Browser autoplay policy allows this once there's been a prior user activation
+             * on the document (which `audioUnlocked` captures and persists via sessionStorage).
+             */
+            setLoudPretendMuted(!getAudioUnlocked())
             /* Cover load + unmute + layout flicker so OOV must not clear `play`. */
             loudOovUnmuteGuardUntilRef.current = Date.now() + 45_000
         }
         prevLoudAutoplayKeyRef.current = loudAutoplayKey
     }, [loudAutoplayKey, useLoudAutoplay])
+
+    /**
+     * Install the site-wide gesture listener once; keep a reactive mirror of `audioUnlocked`
+     * so `useLoudAutoplay` above flips to false the moment any player/page gesture unlocks
+     * audio. Also fast-path collapse any in-progress muted dwell on the current player so
+     * it goes unmuted immediately instead of waiting out the 220ms / 1500ms timer.
+     */
+    useEffect(() => {
+        ensureAudioUnlockGestureListener()
+        const unsub = subscribeAudioUnlocked((unlocked) => {
+            setAudioUnlockedState(unlocked)
+            if (!unlocked) return
+            if (!loudPretendMutedRef.current && !playbackMuteFallbackRef.current) return
+            if (loudUnmuteTimeoutRef.current) {
+                clearTimeout(loudUnmuteTimeoutRef.current)
+                loudUnmuteTimeoutRef.current = null
+            }
+            loudPretendMutedRef.current = false
+            setLoudPretendMuted(false)
+            playbackMuteFallbackRef.current = false
+            setPlaybackMuteFallback(false)
+            const v = videoRef.current
+            if (v) {
+                v.muted = false
+                v.volume = (storeRef.current.volume ?? 100) / 100
+                if (v.paused && storeRef.current.play) {
+                    void v.play().catch(() => {
+                        v.muted = true
+                        void v.play().catch(() => {})
+                    })
+                }
+            }
+        })
+        return unsub
+    }, [])
 
     /**
      * Autoplay must drive `store.play`. Otherwise the play-sync effect calls `video.pause()` while
@@ -903,15 +1202,52 @@ export function BunnyVideoPlayer(props: {
         const video = videoRef.current
         if (!video || showStaticFirstFrame) return
 
+        const onSafariLoadedMetadata = () => {
+            if (!mounted) return
+            setStore({ ready: true, muted })
+            kickPlaybackRef.current()
+        }
+        const onSafariCanPlay = () => {
+            kickPlaybackRef.current()
+        }
+        const onSafariError = () => {
+            if (!mounted) return
+            setVideoError(true)
+            setStore({ error: "Video failed to load" })
+        }
+
         const init = async () => {
             const Hls = await loadHlsJs()
             if (!mounted || !video) return
 
             if (Hls?.isSupported()) {
+                /**
+                 * Mobile tuning (matches YouTube/Vimeo defaults for small screens):
+                 *  - start at the lowest rendition and let ABR promote when bandwidth allows,
+                 *  - cap the rendition to the player size (never pick 1080p for a 360px tile),
+                 *  - tighter buffer so we don't pre-load 60s of segments competing with decode,
+                 *  - conservative initial bandwidth estimate so we don't over-pick on cold start.
+                 * Without this, fresh (uncached) videos can pick a rendition the device can't
+                 * decode smoothly, thrashing the main thread and freezing the UI.
+                 */
+                const onMobile =
+                    isMobileRef.current ||
+                    (typeof window !== "undefined" &&
+                        window.matchMedia("(max-width: 809px)").matches)
                 const hls = new Hls({
                     /* Preview iframe can block HLS’s worker → no decoder / no playback. */
                     enableWorker: RenderTarget.current() !== RenderTarget.preview,
                     lowLatencyMode: false,
+                    ...(onMobile
+                        ? {
+                              startLevel: 0,
+                              capLevelToPlayerSize: true,
+                              maxBufferLength: 10,
+                              maxMaxBufferLength: 20,
+                              backBufferLength: 10,
+                              abrEwmaDefaultEstimate: 500_000,
+                          }
+                        : {}),
                 })
                 hlsRef.current = hls
 
@@ -953,7 +1289,8 @@ export function BunnyVideoPlayer(props: {
                         ready: true,
                         muted,
                     })
-                    setShowPoster(false)
+                    /* Deterministic start after MSE attach — native `autoPlay` often misses the race. */
+                    kickPlaybackRef.current()
                 })
 
                 hls.on(Hls.Events.ERROR, (_, data: unknown) => {
@@ -965,19 +1302,10 @@ export function BunnyVideoPlayer(props: {
                 })
             } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
                 if (mounted) setStore({ loadingPercent: 0 })
-                video.src = streamUrl
-                video.addEventListener("loadedmetadata", () => {
-                    if (mounted) {
-                        setStore({ ready: true, muted })
-                        setShowPoster(false)
-                    }
-                })
-                video.addEventListener("error", () => {
-                    if (mounted) {
-                        setVideoError(true)
-                        setStore({ error: "Video failed to load" })
-                    }
-                })
+                video.src = `${streamUrl}#t=0.001`
+                video.addEventListener("loadedmetadata", onSafariLoadedMetadata)
+                video.addEventListener("canplay", onSafariCanPlay, { once: true })
+                video.addEventListener("error", onSafariError)
             } else {
                 setVideoError(true)
                 setStore({ error: "HLS not supported" })
@@ -987,6 +1315,9 @@ export function BunnyVideoPlayer(props: {
         init()
         return () => {
             mounted = false
+            video.removeEventListener("loadedmetadata", onSafariLoadedMetadata)
+            video.removeEventListener("canplay", onSafariCanPlay)
+            video.removeEventListener("error", onSafariError)
             hlsRef.current?.destroy()
             hlsRef.current = null
             startTimeAppliedRef.current = false
@@ -997,8 +1328,12 @@ export function BunnyVideoPlayer(props: {
         const video = videoRef.current
         if (!video) return
 
-        /* Loud autoplay: start muted (browser allows), then onPlaying flips `loudPretendMuted` and we go full volume. */
-        const videoMuted = store.muted || (useLoudAutoplay && loudPretendMuted)
+        /* Prefer Framer `muted` prop — store can lag one tick behind on first paint; Safari then sees an unmuted play() attempt and blocks autoplay. */
+        const videoMuted =
+            muted ||
+            store.muted ||
+            (useLoudAutoplay && loudPretendMuted) ||
+            playbackMuteFallback
         if (videoMuted) {
             video.muted = true
         } else {
@@ -1009,7 +1344,9 @@ export function BunnyVideoPlayer(props: {
         if (store.play) {
             if (canAutoPlayNow(video)) {
                 video.playbackRate = 1
-                video.play().catch(() => {})
+                void Promise.resolve(video.play()).catch(() => {
+                    if (video.muted) setAutoplayBlocked(true)
+                })
             } else {
                 /* Mobile + thin buffer: wait for `canplaythrough` instead of frame-stuttering. */
                 deferredAutoPlayRef.current = true
@@ -1039,35 +1376,33 @@ export function BunnyVideoPlayer(props: {
             }
         }
 
-        if (store.fullscreenRequest) {
-            const video = videoRef.current
-            try {
-                if (store.fullscreen) {
-                    document.exitFullscreen?.()
-                } else if (video) {
-                    video.requestFullscreen?.()
-                }
-                setStore({ fullscreen: !store.fullscreen, fullscreenRequest: false })
-            } catch {
-                setStore({ fullscreenRequest: false })
-            }
-        }
+        /* `store.fullscreenRequest` is no longer used — the toggle runs synchronously
+         * inside the button's click handler via `registerFullscreenHandler` so iOS Safari
+         * preserves the user-activation token (deferred React state loses it). */
     }, [
         store.play,
         store.muted,
         store.volume,
         store.seekTo,
         store.qualityToSet,
-        store.fullscreenRequest,
-        store.fullscreen,
         store.ready,
         setStore,
+        muted,
         useLoudAutoplay,
         loudPretendMuted,
+        playbackMuteFallback,
+        canAutoPlayNow,
     ])
 
     useEffect(() => {
         if (!useLoudAutoplay || !store.play || !loudPretendMuted) return
+        /**
+         * Mobile: do NOT hammer `play()` during muted loud-autoplay warmup. Every call queues
+         * decoder work on iOS/Android's main thread; combined with native HLS segment decoding
+         * during cold load, this is what produces the frame-by-frame jank. Mobile relies on
+         * the deferred-autoplay gate + a single `play()` call once buffered.
+         */
+        if (isMobileRef.current) return
         if (loudAutoplayBruteIntervalRef.current) {
             clearInterval(loudAutoplayBruteIntervalRef.current)
             loudAutoplayBruteIntervalRef.current = null
@@ -1104,46 +1439,99 @@ export function BunnyVideoPlayer(props: {
     const scheduleLoudAutoplayUnmute = useCallback(() => {
         if (!useLoudAutoplayRef.current || !loudPretendMutedRef.current) return
         if (loudUnmuteTimeoutRef.current != null) return
-        loudUnmuteTimeoutRef.current = window.setTimeout(() => {
-            loudUnmuteTimeoutRef.current = null
+        loudUnmuteMobileRetryCountRef.current = 0
+        /**
+         * Mobile unmute strategy (industry standard for iOS/Android):
+         *  - hold muted playback for ~1500ms after onVideoPlaying so the decoder is stable,
+         *  - only flip `muted` when `readyState`/buffer are healthy; if not, retry soon
+         *    instead of returning forever muted with an "unmuted" UI.
+         *  - on failure, fall back to muted + gesture / audible-assert retry.
+         */
+        const onMobile = isMobileRef.current
+        const initialDelay = onMobile ? MOBILE_LOUD_UNMUTE_DELAY_MS : LOUD_UNMUTE_DELAY_MS
+
+        const tryFlip = () => {
             if (!loudPretendMutedRef.current) return
-            if (loudAutoplayBruteIntervalRef.current) {
-                clearInterval(loudAutoplayBruteIntervalRef.current)
-                loudAutoplayBruteIntervalRef.current = null
-            }
-            loudPretendMutedRef.current = false
             const el = videoRef.current
             if (!el) {
                 setLoudPretendMuted(false)
                 return
             }
+            if (onMobile) {
+                const leadOk =
+                    el.buffered.length === 0 ||
+                    el.buffered.end(el.buffered.length - 1) - el.currentTime >= 3
+                if (el.readyState < 4 /* HAVE_ENOUGH_DATA */ || el.paused || !leadOk) {
+                    if (loudUnmuteMobileRetryCountRef.current++ >= 50) return
+                    loudUnmuteTimeoutRef.current = window.setTimeout(() => {
+                        loudUnmuteTimeoutRef.current = null
+                        tryFlip()
+                    }, 400)
+                    return
+                }
+            }
+            if (loudAutoplayBruteIntervalRef.current) {
+                clearInterval(loudAutoplayBruteIntervalRef.current)
+                loudAutoplayBruteIntervalRef.current = null
+            }
+            loudPretendMutedRef.current = false
             loudUnmuteSpuriousPauseGuardRef.current = true
             const vol = (storeRef.current.volume ?? 100) / 100
             claimAudioFloor(storeId)
-            const playUnmuted = (media: HTMLVideoElement) => {
+            const playUnmutedDesktop = (media: HTMLVideoElement) => {
                 media.muted = false
                 media.volume = vol
                 media.playbackRate = 1
-                void Promise.resolve(media.play()).catch(() => {
-                    loudPretendMutedRef.current = true
-                    setLoudPretendMuted(true)
-                    media.muted = true
-                    void media.play().catch(() => {})
+                Promise.resolve(media.play())
+                    .then(() => {
+                        /* Unmuted play() resolved → browser accepted audio. Persist site-wide. */
+                        setAudioUnlocked(true)
+                    })
+                    .catch(() => {
+                        loudPretendMutedRef.current = true
+                        setLoudPretendMuted(true)
+                        media.muted = true
+                        void media.play().catch(() => {})
+                    })
+            }
+            const playUnmutedMobile = (media: HTMLVideoElement) => {
+                media.muted = false
+                media.volume = vol
+                media.playbackRate = 1
+                Promise.resolve(media.play())
+                    .then(() => {
+                        setAudioUnlocked(true)
+                    })
+                    .catch(() => {
+                        loudPretendMutedRef.current = true
+                        setLoudPretendMuted(true)
+                        media.muted = true
+                        void media.play().catch(() => {})
+                        if (getAudioUnlocked()) scheduleAudibleAssertUntilHeard()
+                    })
+            }
+            const playUnmuted = onMobile ? playUnmutedMobile : playUnmutedDesktop
+            playUnmuted(el)
+            if (!onMobile) {
+                requestAnimationFrame(() => {
+                    const v = videoRef.current
+                    if (v) playUnmuted(v)
                 })
             }
-            playUnmuted(el)
-            requestAnimationFrame(() => {
-                const v = videoRef.current
-                if (v) playUnmuted(v)
-            })
             setLoudPretendMuted(false)
+            setPlaybackMuteFallback(false)
             setStore({ play: true })
             loudOovUnmuteGuardUntilRef.current = Date.now() + 12_000
             window.setTimeout(() => {
                 loudUnmuteSpuriousPauseGuardRef.current = false
             }, 400)
-        }, LOUD_UNMUTE_DELAY_MS)
-    }, [setStore, storeId])
+        }
+
+        loudUnmuteTimeoutRef.current = window.setTimeout(() => {
+            loudUnmuteTimeoutRef.current = null
+            tryFlip()
+        }, initialDelay)
+    }, [setStore, storeId, scheduleAudibleAssertUntilHeard])
 
     useEffect(() => {
         return () => {
@@ -1155,13 +1543,49 @@ export function BunnyVideoPlayer(props: {
     }, [])
 
     useEffect(() => {
-        if (!useLoudAutoplay || !shouldMountVideo) return
+        if (
+            (!useLoudAutoplay && !playbackMuteFallback && !autoplayBlocked) ||
+            !shouldMountVideo
+        )
+            return
         const onUserActivation = () => {
-            if (playOnHoverRef.current || !useLoudAutoplayRef.current || !shouldMountVideoRef.current)
+            if (playOnHoverRef.current || !shouldMountVideoRef.current) return
+            if (
+                !useLoudAutoplayRef.current &&
+                !playbackMuteFallbackRef.current &&
+                !autoplayBlockedRef.current
+            )
                 return
             const v = videoRef.current
             const s = storeRef.current
             if (!v || !s.play) return
+            if (autoplayBlockedRef.current) {
+                v.muted = true
+                v.playbackRate = 1
+                void Promise.resolve(v.play())
+                    .then(() => {
+                        setAutoplayBlocked(false)
+                    })
+                    .catch(() => {})
+                return
+            }
+            /**
+             * Global `pointerdown` gesture retry fires for EVERY player on EVERY click anywhere
+             * on the page. If another player already owns the audio floor, a random click (e.g. on
+             * a modal backdrop) must not let this player steal the floor back — respect the
+             * z-index of whichever player the user explicitly interacted with. We only silently
+             * resume paused playback (muted) so the element stays visually alive.
+             */
+            const owner = getAudioFloorOwner()
+            const my = normalizeStoreKey(storeId)
+            if (owner != null && owner !== my) {
+                if (v.paused && canAutoPlayNow(v)) {
+                    v.muted = true
+                    v.playbackRate = 1
+                    void v.play().catch(() => {})
+                }
+                return
+            }
             if (loudUnmuteTimeoutRef.current) {
                 clearTimeout(loudUnmuteTimeoutRef.current)
                 loudUnmuteTimeoutRef.current = null
@@ -1172,20 +1596,29 @@ export function BunnyVideoPlayer(props: {
             }
             loudPretendMutedRef.current = false
             setLoudPretendMuted(false)
+            playbackMuteFallbackRef.current = false
+            setPlaybackMuteFallback(false)
             claimAudioFloor(storeId)
             v.muted = false
             v.volume = s.volume / 100
             v.playbackRate = 1
-            void v.play().catch(() => {
-                /* Browser still refuses unmuted: revert to loud-muted retry so we try again next gesture. */
-                loudPretendMutedRef.current = true
-                setLoudPretendMuted(true)
-                v.muted = true
-                void v.play().catch(() => {})
-            })
+            Promise.resolve(v.play())
+                .then(() => {
+                    /* Gesture-driven unmuted play resolved → persist site-wide unlock. */
+                    setAudioUnlocked(true)
+                })
+                .catch(() => {
+                    /* Browser still refuses unmuted: revert to loud-muted retry so we try again next gesture. */
+                    loudPretendMutedRef.current = true
+                    setLoudPretendMuted(true)
+                    playbackMuteFallbackRef.current = true
+                    setPlaybackMuteFallback(true)
+                    v.muted = true
+                    void v.play().catch(() => {})
+                })
         }
         return subscribeLoudAutoplayGestureRetry(onUserActivation)
-    }, [useLoudAutoplay, shouldMountVideo, storeId])
+    }, [useLoudAutoplay, playbackMuteFallback, autoplayBlocked, shouldMountVideo, storeId])
 
     useEffect(() => {
         if (!autoplay || playOnHover) return
@@ -1202,11 +1635,151 @@ export function BunnyVideoPlayer(props: {
         return () => window.removeEventListener("pageshow", onPageShow)
     }, [autoplay, playOnHover, setStore])
 
+    /**
+     * Fullscreen state sync. Listens for both the standard `fullscreenchange` and the
+     * WebKit-prefixed event used by older Safari and the mobile WebView. iOS Safari
+     * (iPhone) does not fire `fullscreenchange` at all — instead the **video element**
+     * fires `webkitbeginfullscreen` / `webkitendfullscreen`, so we listen on the video
+     * too and treat those as authoritative for the icon swap.
+     */
     useEffect(() => {
-        const onFullscreenChange = () => setStore({ fullscreen: !!document.fullscreenElement })
+        type FullscreenDoc = Document & {
+            webkitFullscreenElement?: Element | null
+            webkitCurrentFullScreenElement?: Element | null
+            mozFullScreenElement?: Element | null
+            msFullscreenElement?: Element | null
+        }
+        const fsDoc = document as FullscreenDoc
+        const isFullscreenActive = (): boolean => {
+            const v = videoRef.current as (HTMLVideoElement & { webkitDisplayingFullscreen?: boolean }) | null
+            if (v?.webkitDisplayingFullscreen) return true
+            return Boolean(
+                document.fullscreenElement ||
+                    fsDoc.webkitFullscreenElement ||
+                    fsDoc.webkitCurrentFullScreenElement ||
+                    fsDoc.mozFullScreenElement ||
+                    fsDoc.msFullscreenElement
+            )
+        }
+        const onFullscreenChange = () => setStore({ fullscreen: isFullscreenActive() })
         document.addEventListener("fullscreenchange", onFullscreenChange)
-        return () => document.removeEventListener("fullscreenchange", onFullscreenChange)
-    }, [setStore])
+        document.addEventListener("webkitfullscreenchange", onFullscreenChange)
+        const v = videoRef.current
+        v?.addEventListener("webkitbeginfullscreen", onFullscreenChange)
+        v?.addEventListener("webkitendfullscreen", onFullscreenChange)
+        return () => {
+            document.removeEventListener("fullscreenchange", onFullscreenChange)
+            document.removeEventListener("webkitfullscreenchange", onFullscreenChange)
+            v?.removeEventListener("webkitbeginfullscreen", onFullscreenChange)
+            v?.removeEventListener("webkitendfullscreen", onFullscreenChange)
+        }
+    }, [setStore, shouldMountVideo])
+
+    /**
+     * Synchronous fullscreen toggle. The button calls this directly from its `onClick`
+     * so the user-activation token is still alive when `requestFullscreen` runs —
+     * required by iOS Safari and most mobile browsers. Falls back through the matrix:
+     *   1. Standard `requestFullscreen` on the container (best UX: overlay controls visible).
+     *   2. WebKit-prefixed `webkitRequestFullscreen` on the container (older WebKit / iPad).
+     *   3. `video.webkitEnterFullscreen()` — the only path that works on iPhone Safari.
+     */
+    useEffect(() => {
+        type FullscreenDoc = Document & {
+            webkitFullscreenElement?: Element | null
+            webkitCurrentFullScreenElement?: Element | null
+            webkitExitFullscreen?: () => Promise<void> | void
+            mozCancelFullScreen?: () => Promise<void> | void
+            msExitFullscreen?: () => Promise<void> | void
+        }
+        type FullscreenEl = HTMLElement & {
+            webkitRequestFullscreen?: (options?: FullscreenOptions) => Promise<void> | void
+            webkitRequestFullScreen?: () => void
+            mozRequestFullScreen?: () => Promise<void> | void
+            msRequestFullscreen?: () => Promise<void> | void
+        }
+        type FullscreenVideo = HTMLVideoElement & {
+            webkitEnterFullscreen?: () => void
+            webkitExitFullscreen?: () => void
+            webkitDisplayingFullscreen?: boolean
+        }
+
+        const handler = () => {
+            const fsDoc = document as FullscreenDoc
+            const container = containerRef.current as FullscreenEl | null
+            const video = videoRef.current as FullscreenVideo | null
+            const inFullscreen =
+                Boolean(
+                    document.fullscreenElement ||
+                        fsDoc.webkitFullscreenElement ||
+                        fsDoc.webkitCurrentFullScreenElement
+                ) || Boolean(video?.webkitDisplayingFullscreen)
+
+            try {
+                if (inFullscreen) {
+                    if (document.exitFullscreen) {
+                        void document.exitFullscreen().catch(() => {})
+                    } else if (fsDoc.webkitExitFullscreen) {
+                        fsDoc.webkitExitFullscreen()
+                    } else if (fsDoc.mozCancelFullScreen) {
+                        fsDoc.mozCancelFullScreen()
+                    } else if (fsDoc.msExitFullscreen) {
+                        fsDoc.msExitFullscreen()
+                    } else if (video?.webkitExitFullscreen) {
+                        video.webkitExitFullscreen()
+                    }
+                    return
+                }
+
+                if (container?.requestFullscreen) {
+                    void container.requestFullscreen().catch(() => {
+                        if (video?.webkitEnterFullscreen) video.webkitEnterFullscreen()
+                    })
+                    return
+                }
+                if (container?.webkitRequestFullscreen) {
+                    container.webkitRequestFullscreen()
+                    return
+                }
+                if (container?.webkitRequestFullScreen) {
+                    container.webkitRequestFullScreen()
+                    return
+                }
+                if (container?.mozRequestFullScreen) {
+                    void container.mozRequestFullScreen()
+                    return
+                }
+                if (container?.msRequestFullscreen) {
+                    void container.msRequestFullscreen()
+                    return
+                }
+                /* iPhone Safari — only path available; works only on a `<video>` element. */
+                if (video?.webkitEnterFullscreen) {
+                    /* iOS requires the video to be ready (have metadata) before entering. */
+                    if (video.readyState < 1 /* HAVE_METADATA */) {
+                        const onReady = () => {
+                            video.removeEventListener("loadedmetadata", onReady)
+                            try {
+                                video.webkitEnterFullscreen?.()
+                            } catch {
+                                /* user gesture token is lost by now — best effort */
+                            }
+                        }
+                        video.addEventListener("loadedmetadata", onReady, { once: true })
+                        try {
+                            video.load()
+                        } catch {
+                            /* ignore */
+                        }
+                    } else {
+                        video.webkitEnterFullscreen()
+                    }
+                }
+            } catch {
+                /* swallow — caller can retry on next tap */
+            }
+        }
+        return registerFullscreenHandler(storeId, handler)
+    }, [storeId])
 
     const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const hoverOverControlRef = useRef(false)
@@ -1328,7 +1901,16 @@ export function BunnyVideoPlayer(props: {
         setStore({ play: true })
         const s = storeRef.current
         const loudStillPretend = useLoudAutoplayRef.current && loudPretendMutedRef.current
-        if (!s.muted && !loudStillPretend) claimAudioFloor(storeId)
+        if (!s.muted && !loudStillPretend) {
+            claimAudioFloor(storeId)
+            /**
+             * Audible playback actually started (not the muted warmup) → persist site-wide unlock.
+             * Covers every path that lands in `onPlay`: autoplay-unmuted-direct, manual unmute
+             * via controls, tap-to-play, visibility resume, etc.
+             */
+            const v = videoRef.current
+            if (v && !v.muted) setAudioUnlocked(true)
+        }
     }, [setStore, storeId])
     /** Fired when the browser thinks it can play through without rebuffering. Release any deferred autoplay. */
     const onVideoCanPlayThrough = useCallback(() => {
@@ -1341,9 +1923,15 @@ export function BunnyVideoPlayer(props: {
         canPlayThroughRef.current = false
     }, [])
     const onVideoPlaying = useCallback(() => {
+        heardPlayingOnceRef.current = true
+        setAutoplayBlocked(false)
+        setShowPoster(false)
         setStore({ play: true })
         scheduleLoudAutoplayUnmute()
-    }, [setStore, scheduleLoudAutoplayUnmute])
+        if (getAudioUnlocked() && !framerMutedRef.current) {
+            scheduleAudibleAssertUntilHeard()
+        }
+    }, [setStore, scheduleLoudAutoplayUnmute, scheduleAudibleAssertUntilHeard])
     const onPause = useCallback(() => {
         if (programmaticPauseRef.current) return
         if (loudUnmuteSpuriousPauseGuardRef.current) {
@@ -1360,6 +1948,30 @@ export function BunnyVideoPlayer(props: {
         }
         if (document.hidden) {
             setStore({ play: false })
+            return
+        }
+        /**
+         * Safari often emits `pause` during pipeline attach / track swap before the first
+         * `playing` frame. For muted autoplay we previously fell through and cleared
+         * `store.play`, which looked like “must tap / reload to start.” Mirror the loud-autoplay
+         * resume path: retry `play()` instead of clearing intent until we've actually played once.
+         */
+        if (
+            autoplay &&
+            muted &&
+            !playOnHover &&
+            storeRef.current.play &&
+            !heardPlayingOnceRef.current
+        ) {
+            const v = videoRef.current
+            if (v?.paused) {
+                if (!canAutoPlayNow(v)) {
+                    deferredAutoPlayRef.current = true
+                } else {
+                    v.playbackRate = 1
+                    void v.play().catch(() => {})
+                }
+            }
             return
         }
         /* Auto-resume loud-autoplay ONLY when the store still wants play (user pause clears it). */
@@ -1382,7 +1994,7 @@ export function BunnyVideoPlayer(props: {
             return
         }
         setStore({ play: false })
-    }, [setStore, autoplay, muted, playOnHover])
+    }, [setStore, autoplay, muted, playOnHover, canAutoPlayNow])
     const onEnded = useCallback(() => {
         setStore({ ended: true })
     }, [setStore])
@@ -1414,24 +2026,33 @@ export function BunnyVideoPlayer(props: {
     }, [startTimePercent, setStore, scheduleLoudAutoplayUnmute])
 
     /**
-     * Smooth progress UI: ~60fps store updates while playing.
-     * When Play on Hover is on, skip this — carousels + many tickers would otherwise thrash React; `timeupdate` is enough.
+     * Smooth progress UI: ~60fps store updates while playing on desktop.
+     * Mobile uses 4Hz `setInterval` instead — running React state updates on every animation
+     * frame can pile up and block the main thread when the device is already under decode
+     * pressure (cold-load jank). The native `timeupdate` event also fires ~4Hz as a backstop.
+     * When Play on Hover is on, skip this — carousels + many tickers would otherwise thrash React.
      */
     useEffect(() => {
         if (!shouldMountVideo || !store.play || playOnHover) return
-        let rafId = 0
         const tick = () => {
             const v = videoRef.current
-            if (v) {
-                const dur = v.duration
-                setStore({
-                    currentTime: v.currentTime,
-                    duration: Number.isFinite(dur) ? dur : 0,
-                })
-            }
-            rafId = requestAnimationFrame(tick)
+            if (!v) return
+            const dur = v.duration
+            setStore({
+                currentTime: v.currentTime,
+                duration: Number.isFinite(dur) ? dur : 0,
+            })
         }
-        rafId = requestAnimationFrame(tick)
+        if (isMobileRef.current) {
+            const id = window.setInterval(tick, 250)
+            return () => clearInterval(id)
+        }
+        let rafId = 0
+        const loop = () => {
+            tick()
+            rafId = requestAnimationFrame(loop)
+        }
+        rafId = requestAnimationFrame(loop)
         return () => cancelAnimationFrame(rafId)
     }, [shouldMountVideo, store.play, playOnHover, setStore])
     const onProgress = useCallback(() => {
@@ -1441,14 +2062,15 @@ export function BunnyVideoPlayer(props: {
         const duration = v.duration
         /**
          * Mobile autoplay fallback: some HLS streams never fire `canplaythrough`, so release the
-         * deferred autoplay once we have ~5s of buffer lead ahead of `currentTime`, or the full
-         * video fits in the buffer.
+         * deferred autoplay once we have ~8s of buffer lead ahead of `currentTime`, or the full
+         * video fits in the buffer. 8s matches the "healthy start" threshold typical mobile
+         * players use before beginning playback on a cold (uncached) load.
          */
         if (isMobileRef.current && !canPlayThroughRef.current && deferredAutoPlayRef.current) {
             const lead = buffered - v.currentTime
             const fullyBuffered =
                 Number.isFinite(duration) && duration > 0 && buffered >= duration - 0.1
-            if (lead >= 5 || fullyBuffered) {
+            if (lead >= 8 || fullyBuffered) {
                 canPlayThroughRef.current = true
                 tryReleaseDeferredAutoPlay()
             }
@@ -1594,10 +2216,10 @@ export function BunnyVideoPlayer(props: {
                                 : undefined
                         }
                         poster={posterForUi || undefined}
-                        preload={lazyLoad ? "metadata" : "auto"}
+                        preload={isMobile || lazyLoad ? "metadata" : "auto"}
                         loop={loop}
-                        muted={!!(muted || (useLoudAutoplay && loudPretendMuted))}
-                        autoPlay={autoplay && !useLoudAutoplay}
+                        muted={!!(muted || (useLoudAutoplay && loudPretendMuted) || playbackMuteFallback)}
+                        autoPlay={autoplay}
                         playsInline
                         controls={showControls && store.fullscreen}
                         onPlay={onPlay}
@@ -1612,7 +2234,7 @@ export function BunnyVideoPlayer(props: {
                         onWaiting={onVideoWaiting}
                         onLoadedMetadata={() => {
                             setStore({ ready: true, muted })
-                            setShowPoster(false)
+                            kickPlaybackRef.current()
                         }}
                         style={{
                             position: "absolute",

@@ -1,5 +1,10 @@
 import { addPropertyControls, ControlType } from "framer"
-import { useBunnyVideoStore, reportControlHover, useBunnyVideoHoverRef } from "./BunnyVideoStore.tsx"
+import {
+    requestBunnyFullscreenToggle,
+    reportControlHover,
+    useBunnyVideoHoverRef,
+    useBunnyVideoStore,
+} from "./BunnyVideoStore.tsx"
 
 function parsePadding(value: string | undefined): { top: number; right: number; bottom: number; left: number } {
     if (!value || typeof value !== "string") return { top: 0, right: 0, bottom: 0, left: 0 }
@@ -56,9 +61,16 @@ export function BunnyFullscreenButton(props: {
     const onControlHover = (isHovering: boolean) =>
         reportControlHover(isHovering, setStore, hoverLeaveTimeoutRef)
 
+    /**
+     * iOS Safari + most mobile browsers require `requestFullscreen()` to run synchronously
+     * inside the user-gesture handler. Routing through React state would have the request
+     * fire from a later `useEffect` tick, after the user-activation token expired — that's
+     * why fullscreen worked on desktop but silently no-op'd on mobile. We invoke the
+     * registered toggle directly here so the gesture is preserved.
+     */
     const handleClick = (e: React.MouseEvent) => {
         e.stopPropagation()
-        setStore({ fullscreenRequest: true })
+        requestBunnyFullscreenToggle(storeId)
     }
 
     const iconStyleCss: React.CSSProperties = {

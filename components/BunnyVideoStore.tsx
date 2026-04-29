@@ -76,6 +76,79 @@ export function normalizeStoreKey(storeId: string): string {
 const audioFloor: string[] = []
 const audioFloorSubs = new Set<(ownerKey: string | null) => void>()
 
+/**
+ * Site-wide "audio unlocked" flag. Once any user gesture on the site has produced
+ * audible media playback (or the user manually unmuted), every subsequent video can
+ * start unmuted without the muted→unmute dance.
+ *
+ * Persisted in sessionStorage so it survives hard navigations within the same tab
+ * (matches YouTube/Vimeo behavior: you click a thumbnail anywhere on the site, and
+ * the next page's video starts with sound). Scoped per-tab so a fresh tab still
+ * respects the browser's first-load muted-autoplay policy.
+ */
+const AUDIO_UNLOCKED_STORAGE_KEY = "bunny:audio-unlocked"
+let audioUnlocked = ((): boolean => {
+    if (typeof window === "undefined") return false
+    try {
+        return window.sessionStorage?.getItem(AUDIO_UNLOCKED_STORAGE_KEY) === "1"
+    } catch {
+        return false
+    }
+})()
+const audioUnlockedSubs = new Set<(unlocked: boolean) => void>()
+
+export function getAudioUnlocked(): boolean {
+    return audioUnlocked
+}
+
+export function setAudioUnlocked(value: boolean): void {
+    if (audioUnlocked === value) return
+    audioUnlocked = value
+    if (typeof window !== "undefined") {
+        try {
+            if (value) window.sessionStorage?.setItem(AUDIO_UNLOCKED_STORAGE_KEY, "1")
+            else window.sessionStorage?.removeItem(AUDIO_UNLOCKED_STORAGE_KEY)
+        } catch {
+            /* ignore storage failures (private mode / disabled) */
+        }
+    }
+    for (const fn of audioUnlockedSubs) {
+        try {
+            fn(value)
+        } catch {
+            /* ignore */
+        }
+    }
+}
+
+export function subscribeAudioUnlocked(fn: (unlocked: boolean) => void): () => void {
+    audioUnlockedSubs.add(fn)
+    return () => {
+        audioUnlockedSubs.delete(fn)
+    }
+}
+
+/**
+ * Site-wide gesture listener that promotes any user interaction into "audio unlocked".
+ * Covers pointerdown (mouse/touch) and keydown. Installed lazily on first video mount,
+ * kept for the lifetime of the tab — user activation in browsers is document-scoped and
+ * irreversible for our purposes.
+ */
+let audioUnlockGestureAttached = false
+function markAudioUnlockedFromGesture(): void {
+    if (audioUnlocked) return
+    setAudioUnlocked(true)
+}
+export function ensureAudioUnlockGestureListener(): void {
+    if (audioUnlockGestureAttached) return
+    if (typeof document === "undefined") return
+    audioUnlockGestureAttached = true
+    const opts = { capture: true, passive: true } as const
+    document.addEventListener("pointerdown", markAudioUnlockedFromGesture, opts)
+    document.addEventListener("keydown", markAudioUnlockedFromGesture, opts)
+    document.addEventListener("touchstart", markAudioUnlockedFromGesture, opts)
+}
+
 export function getAudioFloorOwner(): string | null {
     if (audioFloor.length === 0) return null
     return audioFloor[audioFloor.length - 1] ?? null
@@ -179,6 +252,32 @@ function ensureLoudAutoplayGestureDocListener(): void {
         capture: true,
         passive: true,
     })
+}
+
+/**
+ * Per-storeId fullscreen handler registry. Mobile browsers — especially iOS Safari — only
+ * honor fullscreen requests when `requestFullscreen()` is called **synchronously** inside
+ * the user gesture (click/tap) handler. Routing the request through React state + useEffect
+ * loses the user-activation token before the request is made, so the browser silently
+ * rejects it. The button calls the registered handler directly in its onClick instead.
+ */
+type BunnyFullscreenHandler = () => void
+const fullscreenHandlers = new Map<string, BunnyFullscreenHandler>()
+
+export function registerFullscreenHandler(storeId: string, handler: BunnyFullscreenHandler): () => void {
+    const key = normalizeStoreKey(storeId)
+    fullscreenHandlers.set(key, handler)
+    return () => {
+        if (fullscreenHandlers.get(key) === handler) fullscreenHandlers.delete(key)
+    }
+}
+
+export function requestBunnyFullscreenToggle(storeId: string): boolean {
+    const key = normalizeStoreKey(storeId)
+    const handler = fullscreenHandlers.get(key)
+    if (!handler) return false
+    handler()
+    return true
 }
 
 /**

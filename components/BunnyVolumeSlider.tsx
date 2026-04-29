@@ -4,6 +4,7 @@ import {
     claimAudioFloor,
     releaseAudioFloor,
     reportControlHover,
+    setAudioUnlocked,
     useBunnyVideoHoverRef,
     useBunnyVideoStore,
 } from "./BunnyVideoStore.tsx"
@@ -228,7 +229,12 @@ export function BunnyVolumeSlider(props: {
             const v = resolvedMin + (pct / 100) * (resolvedMax - resolvedMin)
             const vol = Math.round(v)
             const willUnmute = vol > 0 && store.muted
-            if (willUnmute) claimAudioFloor(storeId)
+            if (willUnmute) {
+                claimAudioFloor(storeId)
+                /* User manually produced audio → persist site-wide unlock so the next
+                 * video mount skips the muted dance entirely. */
+                setAudioUnlocked(true)
+            }
             if (vol <= 0) releaseAudioFloor(storeId)
             setStore({ volume: vol, muted: vol <= 0 })
         },
@@ -282,6 +288,7 @@ export function BunnyVolumeSlider(props: {
                 (store.volume > 0 ? store.volume : 100)
             const restore = Math.max(resolvedMin, Math.min(resolvedMax, restoreFrom))
             claimAudioFloor(storeId)
+            setAudioUnlocked(true)
             setStore({ muted: false, volume: restore > 0 ? restore : Math.max(1, resolvedMin) })
         } else {
             releaseAudioFloor(storeId)

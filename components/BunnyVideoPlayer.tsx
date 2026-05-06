@@ -554,11 +554,6 @@ export function BunnyVideoPlayer(props: {
     const playbackMuteFallbackRef = useRef(false)
     playbackMuteFallbackRef.current = playbackMuteFallback
 
-    /** Safari can reject even muted `play()` (Low Power Mode, policy). Enables poster + gesture retry. */
-    const [autoplayBlocked, setAutoplayBlocked] = useState(false)
-    const autoplayBlockedRef = useRef(false)
-    autoplayBlockedRef.current = autoplayBlocked
-
     /** Do not mount `<video>` until lazy viewport gate passes — avoids native `.m3u8` load + `onError` before HLS.js attaches. */
     const shouldMountVideo = shouldLoadVideo && Boolean(streamUrl) && (!lazyLoad || readyToLoad)
     const shouldMountVideoRef = useRef(shouldMountVideo)
@@ -630,17 +625,13 @@ export function BunnyVideoPlayer(props: {
                 if (!el || !storeRef.current.play || !el.paused) return
                 deferredAutoPlayRef.current = false
                 el.playbackRate = 1
-                void el.play().catch(() => {
-                    if (el.muted) setAutoplayBlocked(true)
-                })
+                void el.play().catch(() => {})
             }, 1000)
             return
         }
         deferredAutoPlayRef.current = false
         v.playbackRate = 1
-        void v.play().catch(() => {
-            if (v.muted) setAutoplayBlocked(true)
-        })
+        void v.play().catch(() => {})
     }, [])
     useEffect(() => {
         return () => {
@@ -740,7 +731,6 @@ export function BunnyVideoPlayer(props: {
         canPlayThroughRef.current = false
         deferredAutoPlayRef.current = false
         setPlaybackMuteFallback(false)
-        setAutoplayBlocked(false)
         cancelAudibleAssertLoop()
         heardPlayingOnceRef.current = false
     }, [streamUrl])
@@ -782,10 +772,7 @@ export function BunnyVideoPlayer(props: {
                 }
             })
             .catch(() => {
-                if (!attemptedUnmuted) {
-                    setAutoplayBlocked(true)
-                    return
-                }
+                if (!attemptedUnmuted) return
                 if (getAudioUnlocked()) {
                     scheduleAudibleAssertUntilHeard()
                     window.setTimeout(() => {
@@ -1205,6 +1192,7 @@ export function BunnyVideoPlayer(props: {
         const onSafariLoadedMetadata = () => {
             if (!mounted) return
             setStore({ ready: true, muted })
+            setShowPoster(false)
             kickPlaybackRef.current()
         }
         const onSafariCanPlay = () => {
@@ -1289,6 +1277,7 @@ export function BunnyVideoPlayer(props: {
                         ready: true,
                         muted,
                     })
+                    setShowPoster(false)
                     /* Deterministic start after MSE attach — native `autoPlay` often misses the race. */
                     kickPlaybackRef.current()
                 })
@@ -1302,7 +1291,7 @@ export function BunnyVideoPlayer(props: {
                 })
             } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
                 if (mounted) setStore({ loadingPercent: 0 })
-                video.src = `${streamUrl}#t=0.001`
+                video.src = streamUrl
                 video.addEventListener("loadedmetadata", onSafariLoadedMetadata)
                 video.addEventListener("canplay", onSafariCanPlay, { once: true })
                 video.addEventListener("error", onSafariError)
@@ -1344,9 +1333,7 @@ export function BunnyVideoPlayer(props: {
         if (store.play) {
             if (canAutoPlayNow(video)) {
                 video.playbackRate = 1
-                void Promise.resolve(video.play()).catch(() => {
-                    if (video.muted) setAutoplayBlocked(true)
-                })
+                video.play().catch(() => {})
             } else {
                 /* Mobile + thin buffer: wait for `canplaythrough` instead of frame-stuttering. */
                 deferredAutoPlayRef.current = true
@@ -1391,7 +1378,6 @@ export function BunnyVideoPlayer(props: {
         useLoudAutoplay,
         loudPretendMuted,
         playbackMuteFallback,
-        canAutoPlayNow,
     ])
 
     useEffect(() => {
@@ -1543,32 +1529,13 @@ export function BunnyVideoPlayer(props: {
     }, [])
 
     useEffect(() => {
-        if (
-            (!useLoudAutoplay && !playbackMuteFallback && !autoplayBlocked) ||
-            !shouldMountVideo
-        )
-            return
+        if ((!useLoudAutoplay && !playbackMuteFallback) || !shouldMountVideo) return
         const onUserActivation = () => {
             if (playOnHoverRef.current || !shouldMountVideoRef.current) return
-            if (
-                !useLoudAutoplayRef.current &&
-                !playbackMuteFallbackRef.current &&
-                !autoplayBlockedRef.current
-            )
-                return
+            if (!useLoudAutoplayRef.current && !playbackMuteFallbackRef.current) return
             const v = videoRef.current
             const s = storeRef.current
             if (!v || !s.play) return
-            if (autoplayBlockedRef.current) {
-                v.muted = true
-                v.playbackRate = 1
-                void Promise.resolve(v.play())
-                    .then(() => {
-                        setAutoplayBlocked(false)
-                    })
-                    .catch(() => {})
-                return
-            }
             /**
              * Global `pointerdown` gesture retry fires for EVERY player on EVERY click anywhere
              * on the page. If another player already owns the audio floor, a random click (e.g. on
@@ -1618,7 +1585,7 @@ export function BunnyVideoPlayer(props: {
                 })
         }
         return subscribeLoudAutoplayGestureRetry(onUserActivation)
-    }, [useLoudAutoplay, playbackMuteFallback, autoplayBlocked, shouldMountVideo, storeId])
+    }, [useLoudAutoplay, playbackMuteFallback, shouldMountVideo, storeId])
 
     useEffect(() => {
         if (!autoplay || playOnHover) return
@@ -1924,8 +1891,6 @@ export function BunnyVideoPlayer(props: {
     }, [])
     const onVideoPlaying = useCallback(() => {
         heardPlayingOnceRef.current = true
-        setAutoplayBlocked(false)
-        setShowPoster(false)
         setStore({ play: true })
         scheduleLoudAutoplayUnmute()
         if (getAudioUnlocked() && !framerMutedRef.current) {
@@ -2219,7 +2184,7 @@ export function BunnyVideoPlayer(props: {
                         preload={isMobile || lazyLoad ? "metadata" : "auto"}
                         loop={loop}
                         muted={!!(muted || (useLoudAutoplay && loudPretendMuted) || playbackMuteFallback)}
-                        autoPlay={autoplay}
+                        autoPlay={autoplay && !useLoudAutoplay}
                         playsInline
                         controls={showControls && store.fullscreen}
                         onPlay={onPlay}
@@ -2234,6 +2199,7 @@ export function BunnyVideoPlayer(props: {
                         onWaiting={onVideoWaiting}
                         onLoadedMetadata={() => {
                             setStore({ ready: true, muted })
+                            setShowPoster(false)
                             kickPlaybackRef.current()
                         }}
                         style={{

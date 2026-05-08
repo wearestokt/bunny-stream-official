@@ -26,7 +26,7 @@ function toTrackColor(color: string, alpha: number): string {
  * @framerDisableEdit
  * @framerSupportedLayoutWidth any
  * @framerSupportedLayoutHeight any
- * @framerIntrinsicWidth 200
+ * @framerIntrinsicWidth 300
  * @framerIntrinsicHeight 16
  */
 export function BunnyProgressBar(props: {
@@ -161,10 +161,11 @@ export function BunnyProgressBar(props: {
     // Framer Number controls may pass strings; React only adds "px" for numeric style values.
     const resolvedTrackHeight = Math.max(2, Math.min(24, Number(trackHeight) || 6))
     const resolvedThumbSize = Math.max(8, Math.min(40, Number(thumbSize) || 8))
-    const resolvedTrackRadius =
-        trackRadiusProp == null || trackRadiusProp === ""
-            ? resolvedTrackHeight / 2
-            : Math.max(0, Number(trackRadiusProp) || 0)
+    const resolvedTrackRadius = (() => {
+        if (trackRadiusProp == null) return resolvedTrackHeight / 2
+        const n = Number(trackRadiusProp)
+        return Number.isFinite(n) ? Math.max(0, n) : resolvedTrackHeight / 2
+    })()
     const containerHeight = Math.max(resolvedTrackHeight, resolvedThumbSize)
 
     const resolvedThumbShadow = thumbIcon ? "none" : thumbShadow
@@ -178,6 +179,7 @@ export function BunnyProgressBar(props: {
             onMouseLeave={() => onControlHover(false)}
             style={{
                 width: "100%",
+                minWidth: 300,
                 height: containerHeight,
                 minHeight: containerHeight,
                 cursor: "pointer",

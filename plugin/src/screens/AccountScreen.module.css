@@ -1,0 +1,227 @@
+.screen {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    flex: 1;
+    min-height: 0;
+}
+
+.body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: var(--space-3);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-elevated);
+}
+
+.eyebrow {
+    font-family: var(--font-family);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+
+.eyebrowAccent {
+    font-family: var(--font-family);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+}
+
+.planHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+}
+
+.planName {
+    margin: 0;
+    font-family: var(--font-family);
+    font-size: 20px;
+    font-weight: var(--weight-semibold);
+    color: var(--text-primary);
+    line-height: 1.1;
+}
+
+.usageRow {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-top: 4px;
+}
+
+.usageLeft {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+}
+
+.usageRight {
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+}
+
+.progress {
+    height: 4px;
+    width: 100%;
+    background: var(--bg-input);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progressFill {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    transition: width var(--transition-base);
+}
+
+.proUpsell {
+    border-color: var(--accent-border-soft);
+    background: var(--bg-elevated);
+    box-shadow: 0 0 0 1px var(--accent-bg-soft);
+}
+
+.proHead {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--accent);
+}
+
+.proIcon {
+    width: 14px;
+    height: 14px;
+    color: var(--accent);
+}
+
+.upsellCopy {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    line-height: var(--leading-normal);
+}
+
+.licenseRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--space-2);
+    width: 100%;
+}
+
+.licenseInputWrap {
+    min-width: 0;
+    width: 100%;
+}
+
+.licenseInputWrap > input {
+    width: 100%;
+    min-width: 0;
+    display: block;
+}
+
+.licenseHelper {
+    margin: 0;
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+    line-height: var(--leading-normal);
+}
+
+.activePill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 18px;
+    padding: 0 var(--space-2);
+    background: rgba(45, 202, 114, 0.12);
+    color: var(--state-success);
+    border-radius: 999px;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+}
+
+.infoRows {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.infoRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+}
+
+.infoLabel {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+}
+
+.infoValue {
+    font-size: var(--text-xs);
+    color: var(--text-primary);
+}
+
+.actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.devToggleRow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: var(--space-2);
+    flex-wrap: wrap;
+}
+
+.devToggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border: 1px dashed var(--border-default);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-tertiary);
+    font-family: var(--font-family);
+    font-size: 10px;
+    font-weight: var(--weight-medium);
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity var(--transition-fast);
+}
+
+.devToggle:hover {
+    opacity: 1;
+}
+
+.devToggleLabel {
+    font-size: 9px;
+    font-weight: var(--weight-semibold);
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    opacity: 0.9;
+}

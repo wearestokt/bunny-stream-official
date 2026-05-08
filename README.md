@@ -7,7 +7,7 @@ Standalone Framer code components for [Bunny Stream](https://bunny.net/stream) v
 | Path | What it is |
 |------|----------------|
 | [`components/`](components/) | Video player, store, controls |
-| [`plugin/`](plugin/) | **Bunny Stream Player** Framer plugin (installs everything under `components/` except the carousel) |
+| [`plugin/`](plugin/) | **Stream Bunny** Framer plugin (installs everything under `components/` except the carousel) |
 | [`bunny-image-carousel/`](bunny-image-carousel/) | **Image carousel** only: one [`BunnyImageCarousel.tsx`](bunny-image-carousel/BunnyImageCarousel.tsx) + its own [`plugin/`](bunny-image-carousel/plugin/) |
 
 The carousel is **not** bundled with the main Stream plugin so you can ship or omit it independently.
@@ -16,7 +16,7 @@ The carousel is **not** bundled with the main Stream plugin so you can ship or o
 
 ### Video player + controls
 
-**Option A – Plugin:** [`plugin/`](plugin/) → `npm install && npm run dev`, open **Bunny Stream Player** in Framer, install components.
+**Option A – Plugin:** [`plugin/`](plugin/) → `npm install && npm run dev`, open **Stream Bunny** in Framer, install components.
 
 **Option B – Manual:** See [Setup in Framer (manual)](#setup-in-framer-manual) below.
 

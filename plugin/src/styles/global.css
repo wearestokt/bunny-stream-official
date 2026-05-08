@@ -1,0 +1,181 @@
+/**
+ * Plugin design tokens — single source of truth.
+ * Values mirror CURSOR-framer-plugin.md sections 4 / 5 / 6 / 8 / 10.
+ * Components must read these via var(--…) and never hardcode hex.
+ */
+
+:root {
+    /* ---- Colors (dark, default) ---- */
+    --bg-base: #000000;
+    --bg-elevated: #111111;
+    --bg-hover: #151515;
+    --bg-active: #1a1a1a;
+    --bg-input: #0a0a0a;
+
+    --border-subtle: rgba(255, 255, 255, 0.06);
+    --border-default: rgba(255, 255, 255, 0.10);
+    --border-focus: rgba(255, 255, 255, 0.25);
+
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255, 255, 255, 0.55);
+    --text-tertiary: rgba(255, 255, 255, 0.30);
+    --text-link: #FF4A1F;
+
+    --accent: #FF4A1F;
+    --accent-hover: #FF5C36;
+    --accent-bg-soft: rgba(255, 74, 31, 0.12);
+    --accent-border-soft: rgba(255, 74, 31, 0.40);
+
+    --row-locked-bg: rgba(0, 0, 0, 0.30);
+    --overlay-lock: rgba(0, 0, 0, 0.74);
+    --text-locked: rgba(255, 255, 255, 0.55);
+    --text-disabled: rgba(255, 255, 255, 0.30);
+
+    --state-error: #ff4d4d;
+    --state-success: #2dca72;
+    --state-warning: #ffaa00;
+
+    --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+
+    /* ---- Typography ---- */
+    --font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+    --text-xs: 11px;
+    --text-sm: 12px;
+    --text-base: 13px;
+    --text-md: 14px;
+
+    --weight-regular: 400;
+    --weight-medium: 500;
+    --weight-semibold: 600;
+
+    --leading-tight: 1.2;
+    --leading-normal: 1.4;
+    --leading-loose: 1.6;
+
+    /* ---- Spacing ---- */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+
+    /* ---- Radius (capped at 8px per spec §13) ---- */
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+
+    /* ---- Motion ---- */
+    --transition-fast: 120ms ease;
+    --transition-base: 200ms ease;
+
+    /* ---- Sizes ---- */
+    --control-height: 28px;
+    --row-height: 28px;
+    --panel-padding: 12px;
+}
+
+@media (prefers-color-scheme: light) {
+    :root {
+        /* Paper is dark-only. Mirror the same values so light-mode doesn't drift. */
+        --bg-base: #000000;
+        --bg-elevated: #111111;
+        --bg-hover: #151515;
+        --bg-active: #1a1a1a;
+        --bg-input: #0a0a0a;
+
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border-default: rgba(255, 255, 255, 0.10);
+        --border-focus: rgba(255, 255, 255, 0.25);
+
+        --text-primary: #ffffff;
+        --text-secondary: rgba(255, 255, 255, 0.55);
+        --text-tertiary: rgba(255, 255, 255, 0.30);
+        --text-link: #FF4A1F;
+
+        --accent: #FF4A1F;
+        --accent-hover: #FF5C36;
+        --accent-bg-soft: rgba(255, 74, 31, 0.12);
+        --accent-border-soft: rgba(255, 74, 31, 0.40);
+
+        --row-locked-bg: rgba(0, 0, 0, 0.30);
+        --overlay-lock: rgba(0, 0, 0, 0.74);
+        --text-locked: rgba(255, 255, 255, 0.55);
+        --text-disabled: rgba(255, 255, 255, 0.30);
+
+        --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+    }
+}
+
+/**
+ * Override Framer's plugin chrome tokens so primitives that read
+ * --framer-* (inputs, focus rings, native widgets) inherit our palette.
+ */
+:root,
+body,
+#root {
+    --framer-font-family: var(--font-family);
+    --framer-color-bg: var(--bg-base);
+    --framer-color-bg-secondary: var(--bg-elevated);
+    --framer-color-bg-tertiary: var(--bg-input);
+    --framer-color-text: var(--text-primary);
+    --framer-color-text-secondary: var(--text-secondary);
+    --framer-color-text-tertiary: var(--text-tertiary);
+    --framer-color-tint: var(--accent);
+    --framer-color-tint-dark: var(--accent);
+    --framer-color-tint-extra-dark: var(--accent);
+    --framer-color-divider: var(--border-subtle);
+}
+
+html,
+body,
+#root {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-family);
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+}
+
+/* Spec §10 — thin scrollbars match Framer's inspector chrome. */
+.scrollable {
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.scrollable::-webkit-scrollbar {
+    width: 4px;
+}
+
+.scrollable::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: var(--radius-sm);
+}
+
+.scrollable::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/**
+ * Section visibility helper for screen-reader-only labels.
+ */
+.srOnly {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.errorBoundary {
+    padding: var(--space-3);
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-size: var(--text-base);
+}

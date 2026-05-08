@@ -1,5 +1,5 @@
 /**
- * Bunny Stream component sources - imported at build time for createCodeFile.
+ * Stream Bunny plugin component sources — imported at build time for createCodeFile.
  * Paths are relative to plugin/ (parent of src/).
  */
 // @ts-expect-error - Vite ?raw import

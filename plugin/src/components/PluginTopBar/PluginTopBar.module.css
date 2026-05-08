@@ -1,0 +1,17 @@
+.bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: var(--row-height);
+    flex-shrink: 0;
+}
+
+.spacer {
+    flex: 1;
+}
+
+.right {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+}

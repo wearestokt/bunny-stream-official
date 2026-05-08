@@ -1,5 +1,6 @@
 import "framer-plugin/framer.css"
-import "./index.css"
+import "./styles/reset.css"
+import "./styles/global.css"
 
 import React, { Component, type ReactNode } from "react"
 import ReactDOM from "react-dom/client"
@@ -15,19 +16,16 @@ class ErrorBoundary extends Component<
         return { hasError: true, error }
     }
 
+    componentDidCatch(error: Error, info: React.ErrorInfo) {
+        console.error("[Stream Bunny plugin]", error, info.componentStack)
+    }
+
     render() {
         if (this.state.hasError) {
             return (
-                <div
-                    style={{
-                        padding: 16,
-                        background: "#0d0d0d",
-                        color: "#ffffff",
-                        fontSize: 13,
-                    }}
-                >
+                <main role="alert" aria-live="assertive" className="errorBoundary">
                     <strong>Plugin error:</strong> {this.state.error?.message}
-                </div>
+                </main>
             )
         }
         return this.props.children

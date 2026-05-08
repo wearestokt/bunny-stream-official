@@ -1,222 +1,363 @@
-import { framer, isCodeFileComponentExport } from "framer-plugin"
-import {
-    Clock,
-    Fullscreen,
-    Gauge,
-    Play,
-    Settings2,
-    Video,
-    Volume2,
-} from "lucide-react"
-import React, { useCallback, useEffect, useRef } from "react"
-import { Item, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { COMPONENT_FILES } from "./componentSources.ts"
+import { framer } from "framer-plugin"
+import * as React from "react"
 
-const NOT_DRAGGABLE = new Set(["BunnyVideoStore.tsx"])
-const DROPPABLE_FILES = COMPONENT_FILES.filter((f) => !NOT_DRAGGABLE.has(f.name))
+import { Alert } from "@/components/Alert/Alert"
+import { Button } from "@/components/Button/Button"
+import { InsertedToast } from "@/components/InsertedToast/InsertedToast"
+import { PluginFooter } from "@/components/PluginFooter/PluginFooter"
+import { Skeleton } from "@/components/Skeleton/Skeleton"
+import { TutorialDialog } from "@/components/TutorialDialog/TutorialDialog"
+import { UpgradeDialog } from "@/components/UpgradeDialog/UpgradeDialog"
+import {
+    resolvePublishedModuleUrlMap,
+    resolveTemplateModuleUrlMap,
+    useEmbeddedLocalSources,
+    type TemplateModuleKey,
+} from "@/component-modules"
+import {
+    EMBED_SOURCE_MODE_BODY,
+    EMBED_SOURCE_MODE_TITLE,
+    ERROR_MODULE_URLS_BODY,
+    ERROR_MODULE_URLS_DEV_HINT,
+    ERROR_MODULE_URLS_TITLE,
+    ERROR_RETRY,
+    LICENSE_REVOKED,
+    LICENSE_SIGN_OUT,
+    LOADING_LABEL,
+    POLAR_CHECKOUT_FALLBACK,
+    PLUGIN_VERSION,
+} from "@/copy"
+import {
+    ClockIcon,
+    CogIcon,
+    FullscreenIcon,
+    GaugeIcon,
+    PlayIcon,
+    VideoIcon,
+    VolumeIcon,
+} from "@/icons"
+import {
+    downgradeToFree,
+    FREE_TIER_MAX_CANVAS_INSERTS,
+    getEntitlementSnapshot,
+    maybeRevalidateStoredLicense,
+    recordSuccessfulCanvasInsert,
+} from "@/lib/entitlement"
+import { NavigationProvider, useNavigation } from "@/lib/navigation"
+import { AccountScreen } from "@/screens/AccountScreen"
+import { ComponentsScreen } from "@/screens/ComponentsScreen"
+import { Dashboard } from "@/screens/Dashboard"
+import { HelpScreen } from "@/screens/HelpScreen"
+import { QuickStartScreen } from "@/screens/QuickStartScreen"
+import { TemplatesScreen } from "@/screens/TemplatesScreen"
+
+import styles from "./App.module.css"
 
 const DISPLAY_NAMES: Record<string, string> = {
-    "BunnyVideoPlayer.tsx": "Video Player",
-    "BunnyPlayPauseButton.tsx": "Play/Pause Button",
-    "BunnyVolumeSlider.tsx": "Volume Slider",
-    "BunnyProgressBar.tsx": "Progress Bar",
-    "BunnyTimeDisplay.tsx": "Time Display",
-    "BunnyQualityPickerButton.tsx": "Quality Picker",
-    "BunnyFullscreenButton.tsx": "Fullscreen Button",
+    BunnyVideoPlayer: "Video Player",
+    BunnyPlayPauseButton: "Play / Pause",
+    BunnyVolumeSlider: "Volume",
+    BunnyProgressBar: "Progress Bar",
+    BunnyTimeDisplay: "Time Display",
+    BunnyQualityPickerButton: "Quality Picker",
+    BunnyFullscreenButton: "Fullscreen",
 }
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-    BunnyVideoPlayer: Video,
-    BunnyPlayPauseButton: Play,
-    BunnyVolumeSlider: Volume2,
-    BunnyProgressBar: Gauge,
-    BunnyTimeDisplay: Clock,
-    BunnyQualityPickerButton: Settings2,
-    BunnyFullscreenButton: Fullscreen,
+    BunnyVideoPlayer: VideoIcon,
+    BunnyPlayPauseButton: PlayIcon,
+    BunnyVolumeSlider: VolumeIcon,
+    BunnyProgressBar: GaugeIcon,
+    BunnyTimeDisplay: ClockIcon,
+    BunnyQualityPickerButton: CogIcon,
+    BunnyFullscreenButton: FullscreenIcon,
 }
-
-const README_URL = "https://github.com/wearestokt/bunny-stream-official/blob/main/README.md"
 
 framer.showUI({
     position: "top right",
-    width: 320,
+    width: 300,
     height: 700,
 })
 
-export function App() {
-    const [urlMap, setUrlMap] = React.useState<Record<string, string>>({})
-    const [ready, setReady] = React.useState(false)
-    const [error, setError] = React.useState<string | null>(null)
-    const initRef = useRef(false)
-
-    const ensureComponents = useCallback(async () => {
-        try {
-            const files = await framer.getCodeFiles()
-            const byName = Object.fromEntries(files.map((f) => [f.name, f]))
-
-            for (const { name, code } of COMPONENT_FILES) {
-                if (!byName[name]) {
-                    await framer.createCodeFile(name, code, { editViaPlugin: false })
-                }
-            }
-
-            const updated = await framer.getCodeFiles()
-            const map: Record<string, string> = {}
-            for (const file of updated) {
-                const baseName = file.name.replace(".tsx", "")
-                const compExport = file.exports?.find(isCodeFileComponentExport)
-                if (compExport?.insertURL) {
-                    map[baseName] = compExport.insertURL
-                }
-            }
-            setUrlMap(map)
-            setReady(true)
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "Failed to load components")
-        }
-    }, [])
-
-    useEffect(() => {
-        if (initRef.current) return
-        initRef.current = true
-        ensureComponents()
-    }, [ensureComponents])
-
-    if (error) {
-        return (
-            <main className="plugin-main">
-                <p className="plugin-error">{error}</p>
-            </main>
-        )
-    }
-
-    if (!ready) {
-        return (
-            <main className="plugin-main">
-                <p className="plugin-muted">Loading components…</p>
-            </main>
-        )
-    }
-
+function LoadingView() {
     return (
-        <main className="plugin-main">
-            <div className="plugin-banner">
-                <img src="/bunny-logo.png" alt="Bunny Stream" className="plugin-banner-img" />
+        <main className={styles.main}>
+            <Skeleton style={{ height: 28 }} />
+            <div className={styles.loadingBody}>
+                <Skeleton style={{ height: 80 }} />
+                <Skeleton style={{ flex: 1, minHeight: 0 }} />
+                <p className={styles.loadingLabel}>{LOADING_LABEL}</p>
             </div>
-            <Tabs defaultValue="components" className="plugin-tabs-container">
-                <TabsList variant="line" className="plugin-tabs-list">
-                    <TabsTrigger value="components">Components</TabsTrigger>
-                    <TabsTrigger value="templates">
-                        Templates
-                    </TabsTrigger>
-                    <TabsTrigger value="docs">Docs</TabsTrigger>
-                </TabsList>
-                <TabsContent value="components" className="plugin-list-wrapper">
-                    <ItemGroup className="plugin-list" data-size="sm">
-                        {DROPPABLE_FILES.map(({ name }) => {
-                            const baseName = name.replace(".tsx", "")
-                            const url = urlMap[baseName]
-                            const Icon = ICONS[baseName]
-                            const displayName = DISPLAY_NAMES[name] ?? baseName
-                            if (!url) return null
-                            return (
-                                <DraggableItem
-                                    key={name}
-                                    url={url}
-                                    baseName={baseName}
-                                    displayName={displayName}
-                                    icon={Icon}
-                                />
-                            )
-                        })}
-                    </ItemGroup>
-                </TabsContent>
-                <TabsContent value="templates" className="plugin-list-wrapper">
-                    <p className="plugin-muted">Templates are coming soon</p>
-                </TabsContent>
-                <TabsContent value="docs" className="plugin-docs-wrapper">
-                    <div className="plugin-docs">
-                        <p className="plugin-docs-desc">
-                            Bunny Stream components for Framer. Drag components onto the canvas to add
-                            video players and controls powered by{" "}
-                            <a href="https://bunny.net?ref=f9ztcmeo63" target="_blank" rel="noopener noreferrer">
-                                Bunny.net Stream
-                            </a>
-                            .
-                        </p>
-                        <a
-                            href={README_URL}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="plugin-docs-link"
-                        >
-                            Read the full documentation →
-                        </a>
-                    </div>
-                </TabsContent>
-            </Tabs>
-            <footer className="plugin-footer">
-                Made by{" "}
-                <a
-                    href="https://wearestokt.com"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="plugin-footer-link"
-                >
-                    Stōkt
-                </a>
-            </footer>
         </main>
     )
 }
 
-function DraggableItem({
-    url,
-    baseName,
-    displayName,
-    icon: Icon,
-}: {
-    url: string
-    baseName: string
-    displayName: string
-    icon: React.ComponentType<{ className?: string }>
-}) {
-    const elRef = useRef<HTMLDivElement>(null)
+function AppShell() {
+    const { screen, push, back } = useNavigation()
+    const [urlMap, setUrlMap] = React.useState<Record<string, string>>({})
+    const templateUrlMap = React.useMemo(
+        () => resolveTemplateModuleUrlMap(),
+        []
+    ) as Record<TemplateModuleKey, string | undefined>
+    const [ready, setReady] = React.useState(false)
+    const [error, setError] = React.useState<string | null>(null)
+    const [, setEntitlementTick] = React.useState(0)
+    const [upgradeOpen, setUpgradeOpen] = React.useState(false)
+    const [tutorialOpen, setTutorialOpen] = React.useState(false)
+    const [toastOpen, setToastOpen] = React.useState(false)
+    const [toastTitle, setToastTitle] = React.useState<string | undefined>(undefined)
+    const [toastUsed, setToastUsed] = React.useState(0)
+    const [highlightKey, setHighlightKey] = React.useState<string | null>(null)
+    const [revokedBanner, setRevokedBanner] = React.useState(false)
 
-    useEffect(() => {
-        const el = elRef.current
-        if (!el) return
-        const cleanup = framer.makeDraggable(
-            el,
-            () => ({
-                type: "componentInstance",
-                name: displayName,
-                url,
-            }),
-            (result) => {
-                if (result.status === "error") {
-                    framer.notify(result.reason ?? "Drop failed")
-                }
+    const entitlement = getEntitlementSnapshot()
+    const polarCheckout =
+        (import.meta.env.VITE_POLAR_CHECKOUT_URL as string | undefined)?.trim() ||
+        POLAR_CHECKOUT_FALLBACK
+    const embedSourceMode = useEmbeddedLocalSources()
+
+    const load = React.useCallback(async () => {
+        setError(null)
+        setReady(false)
+        try {
+            const published = resolvePublishedModuleUrlMap()
+            if (embedSourceMode) {
+                const { loadUrlMapFromEmbeddedProjectFiles } = await import(
+                    "./embed-local-components.ts"
+                )
+                setUrlMap(await loadUrlMapFromEmbeddedProjectFiles())
+                setReady(true)
+                return
             }
-        )
-        return () => {
-            if (typeof cleanup === "function") {
-                cleanup()
-            } else if (cleanup && typeof (cleanup as Promise<() => void>).then === "function") {
-                ;(cleanup as Promise<() => void>).then((fn) => typeof fn === "function" && fn())
+            if (published.ok) {
+                setUrlMap(published.map)
+                setReady(true)
+                return
             }
+            setError(
+                `${ERROR_MODULE_URLS_BODY}${
+                    import.meta.env.DEV ? ` ${ERROR_MODULE_URLS_DEV_HINT}` : ""
+                }`
+            )
+            setReady(false)
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to load components")
+            setReady(false)
         }
-    }, [url, baseName, displayName])
+    }, [embedSourceMode])
+
+    React.useEffect(() => {
+        void load()
+    }, [load])
+
+    React.useEffect(() => {
+        void (async () => {
+            const r = await maybeRevalidateStoredLicense()
+            if (r.revoked) {
+                setRevokedBanner(true)
+                setEntitlementTick((t) => t + 1)
+            }
+        })()
+    }, [])
+
+    /**
+     * Spec §15 — auth flows surface a logout option via the Menu API. We register a
+     * Plugin window menu that exposes Sign out only when the user is on Pro.
+     */
+    React.useEffect(() => {
+        const framerWithMenu = framer as { setMenu?: (items: unknown[]) => Promise<void> }
+        if (typeof framerWithMenu.setMenu !== "function") return
+        if (entitlement.tier === "pro") {
+            void framerWithMenu.setMenu([
+                {
+                    type: "action",
+                    label: LICENSE_SIGN_OUT,
+                    onAction: () => {
+                        downgradeToFree()
+                        setEntitlementTick((t) => t + 1)
+                    },
+                },
+            ])
+        } else {
+            void framerWithMenu.setMenu([])
+        }
+    }, [entitlement.tier])
+
+    const onInsertSuccess = React.useCallback((baseName: string, displayName: string) => {
+        recordSuccessfulCanvasInsert()
+        const next = getEntitlementSnapshot()
+        setEntitlementTick((t) => t + 1)
+        setToastTitle(`Inserted ${displayName}`)
+        setToastUsed(next.insertsUsed)
+        setToastOpen(true)
+        setHighlightKey(baseName)
+        window.setTimeout(() => setHighlightKey(null), 4500)
+    }, [])
+
+    const onUnlocked = React.useCallback(() => {
+        setEntitlementTick((t) => t + 1)
+    }, [])
+
+    const dismissToast = React.useCallback(() => {
+        setToastOpen(false)
+        setHighlightKey(null)
+    }, [])
+
+    const isFreeAtLimit = entitlement.tier === "free" && entitlement.atLimit
+
+    React.useEffect(() => {
+        if (!toastOpen) return
+        // The limit toast is a CTA — keep it visible until the user acts on or dismisses it.
+        if (isFreeAtLimit) return
+        const t = window.setTimeout(() => setToastOpen(false), 4000)
+        return () => window.clearTimeout(t)
+    }, [toastOpen, isFreeAtLimit])
+
+    React.useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") dismissToast()
+        }
+        window.addEventListener("keydown", onKey)
+        return () => window.removeEventListener("keydown", onKey)
+    }, [dismissToast])
+
+    const insertBlocked = entitlement.tier === "free" && entitlement.atLimit
+    const showPluginFooter = screen !== "help" && !upgradeOpen
+
+    if (!ready && !error) return <LoadingView />
+
+    if (error) {
+        const isModuleConfigError = error.startsWith(ERROR_MODULE_URLS_BODY)
+        return (
+            <main className={styles.main}>
+                <Alert
+                    tone={isModuleConfigError ? "warning" : "danger"}
+                    title={
+                        isModuleConfigError ? ERROR_MODULE_URLS_TITLE : "Couldn't load components"
+                    }
+                >
+                    {error}
+                </Alert>
+                <Button variant="primary" fullWidth onClick={() => void load()}>
+                    {ERROR_RETRY}
+                </Button>
+            </main>
+        )
+    }
 
     return (
-        <div ref={elRef} className="plugin-draggable-wrapper">
-            <Item variant="default" size="sm" className="plugin-item">
-                <ItemMedia variant="icon">
-                    <Icon className="size-4" />
-                </ItemMedia>
-                <ItemTitle className="plugin-item-title">{displayName}</ItemTitle>
-            </Item>
-        </div>
+        <>
+            <main className={styles.main}>
+                {revokedBanner ? (
+                    <Alert tone="danger" title="License">
+                        {LICENSE_REVOKED}
+                    </Alert>
+                ) : null}
+                {embedSourceMode ? (
+                    <Alert tone="warning" title={EMBED_SOURCE_MODE_TITLE}>
+                        {EMBED_SOURCE_MODE_BODY}
+                    </Alert>
+                ) : null}
+
+                <div className={styles.body}>
+                    {screen === "dashboard" ? (
+                        <Dashboard
+                            entitlement={entitlement}
+                            onNavigate={push}
+                            onUpgradeClick={() => setUpgradeOpen(true)}
+                        />
+                    ) : null}
+
+                    {screen === "components" ? (
+                        <ComponentsScreen
+                            urlMap={urlMap}
+                            displayNames={DISPLAY_NAMES}
+                            icons={ICONS}
+                            insertBlocked={insertBlocked}
+                            onInsertSuccess={onInsertSuccess}
+                            highlightKey={highlightKey}
+                            entitlementTier={entitlement.tier}
+                            onUpgradeClick={() => setUpgradeOpen(true)}
+                            onBack={back}
+                        />
+                    ) : null}
+
+                    {screen === "templates" ? (
+                        <TemplatesScreen
+                            entitlementTier={entitlement.tier}
+                            urlMap={urlMap}
+                            templateUrlMap={templateUrlMap}
+                            onBack={back}
+                            onUpgradeClick={() => setUpgradeOpen(true)}
+                            onInsertSuccess={onInsertSuccess}
+                        />
+                    ) : null}
+
+                    {screen === "quickstart" ? (
+                        <QuickStartScreen onBack={back} onOpenTutorial={() => setTutorialOpen(true)} />
+                    ) : null}
+
+                    {screen === "help" ? (
+                        <HelpScreen onBack={back} onOpenTutorial={() => setTutorialOpen(true)} />
+                    ) : null}
+
+                    {screen === "account" ? (
+                        <AccountScreen
+                            entitlement={entitlement}
+                            onBack={back}
+                            onUpgradeClick={() => setUpgradeOpen(true)}
+                            polarCheckoutUrl={polarCheckout}
+                            onEntitlementChange={() => setEntitlementTick((t) => t + 1)}
+                        />
+                    ) : null}
+                </div>
+                {toastOpen && screen === "components" ? (
+                    isFreeAtLimit ? (
+                        <InsertedToast
+                            variant="limit"
+                            title="You've used your free inserts"
+                            subtitle="Upgrade to Pro for unlimited inserts, every template, and lifetime updates — one-time $49."
+                            ctaLabel="Upgrade to Pro"
+                            onCta={() => {
+                                setToastOpen(false)
+                                setUpgradeOpen(true)
+                            }}
+                            onDismiss={dismissToast}
+                        />
+                    ) : (
+                        <InsertedToast
+                            title={toastTitle}
+                            subtitle={
+                                entitlement.tier === "pro"
+                                    ? "Pro plan · Unlimited inserts"
+                                    : `${toastUsed} of ${FREE_TIER_MAX_CANVAS_INSERTS} free inserts used`
+                            }
+                            onDismiss={dismissToast}
+                        />
+                    )
+                ) : null}
+                {showPluginFooter ? (
+                    <PluginFooter
+                        version={PLUGIN_VERSION}
+                        onOpenHelp={() => push("help")}
+                    />
+                ) : null}
+            </main>
+            <UpgradeDialog
+                open={upgradeOpen}
+                onOpenChange={setUpgradeOpen}
+                onUnlocked={onUnlocked}
+                polarCheckoutUrl={polarCheckout}
+            />
+            <TutorialDialog open={tutorialOpen} onOpenChange={setTutorialOpen} />
+        </>
+    )
+}
+
+export function App() {
+    return (
+        <NavigationProvider>
+            <AppShell />
+        </NavigationProvider>
     )
 }

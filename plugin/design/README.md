@@ -1,4 +1,4 @@
-# Bunny Stream Plugin – Figma Design
+# Stream Bunny Plugin – Figma Design
 
 ## Import into Figma
 
@@ -17,7 +17,7 @@ If you prefer to build from scratch in Figma, here are the specs:
 - **Background:** `#1a1a1a` (dark) or `#ffffff` (light)
 
 ### Title
-- **Text:** "Bunny Stream Video Player"
+- **Text:** "Stream Bunny"
 - **Font:** Geist Mono (or Inter as fallback)
 - **Size:** 16 px
 - **Weight:** 600 (Semibold)

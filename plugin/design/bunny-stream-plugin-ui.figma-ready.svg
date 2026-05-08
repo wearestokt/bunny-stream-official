@@ -5,7 +5,7 @@
   <!-- Content area -->
   <g transform="translate(16, 16)">
     <!-- Title -->
-    <text x="0" y="24" font-family="Geist Mono, monospace" font-size="16" font-weight="600" fill="#ffffff">Bunny Stream Video Player</text>
+    <text x="0" y="24" font-family="Geist Mono, monospace" font-size="16" font-weight="600" fill="#ffffff">Stream Bunny</text>
     
     <!-- List items -->
     <g transform="translate(0, 48)">

@@ -217,3 +217,69 @@
     max-width: 220px;
 }
 
+.codeOverrideRow {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: var(--space-2);
+    width: 100%;
+    height: 36px;
+    padding: 0 var(--space-3);
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    cursor: default;
+    transition: background var(--transition-fast);
+}
+
+.codeOverrideRow:hover {
+    background: var(--bg-hover);
+}
+
+.codeOverrideRowLocked {
+    background: var(--row-locked-bg);
+}
+
+.rowList > :last-child .codeOverrideRow {
+    border-bottom: 0;
+}
+
+.codeOverrideLabel {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
+.codeOverrideLabel .rowTitle {
+    flex: 0 0 auto;
+    min-width: auto;
+    overflow: visible;
+    text-overflow: clip;
+    color: var(--text-primary);
+}
+
+.codeOverrideRow .codeOverrideBtn {
+    margin-left: auto;
+    width: fit-content;
+    flex: 0 0 auto;
+    height: 22px;
+    min-height: 22px;
+    padding: 0 var(--space-2);
+    font-size: var(--text-xs);
+    line-height: 1;
+    white-space: nowrap;
+    color: var(--text-tertiary);
+    border-color: var(--border-default);
+    transition: color var(--transition-fast), border-color var(--transition-fast),
+        background var(--transition-fast);
+}
+
+.codeOverrideRow:hover .codeOverrideBtn:not(:disabled),
+.codeOverrideRow .codeOverrideBtn:not(:disabled):hover {
+    color: var(--accent);
+    border-color: var(--accent-border-soft);
+}
+

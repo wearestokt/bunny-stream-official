@@ -1,0 +1,44 @@
+name: Build plugin release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: plugin/package-lock.json
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_SB_MODULE_BunnyVideoPlayer: ${{ secrets.VITE_SB_MODULE_BunnyVideoPlayer }}
+          VITE_SB_MODULE_BunnyPlayPauseButton: ${{ secrets.VITE_SB_MODULE_BunnyPlayPauseButton }}
+          VITE_SB_MODULE_BunnyVolumeSlider: ${{ secrets.VITE_SB_MODULE_BunnyVolumeSlider }}
+          VITE_SB_MODULE_BunnyProgressBar: ${{ secrets.VITE_SB_MODULE_BunnyProgressBar }}
+          VITE_SB_MODULE_BunnyTimeDisplay: ${{ secrets.VITE_SB_MODULE_BunnyTimeDisplay }}
+          VITE_SB_MODULE_BunnyQualityPickerButton: ${{ secrets.VITE_SB_MODULE_BunnyQualityPickerButton }}
+          VITE_SB_MODULE_BunnyFullscreenButton: ${{ secrets.VITE_SB_MODULE_BunnyFullscreenButton }}
+          VITE_SB_MODULE_BunnyIdleFade: ${{ secrets.VITE_SB_MODULE_BunnyIdleFade }}
+          VITE_SB_MODULE_BunnyVideoStore: ${{ secrets.VITE_SB_MODULE_BunnyVideoStore }}
+          VITE_LICENSE_VALIDATE_URL: ${{ secrets.VITE_LICENSE_VALIDATE_URL }}
+          VITE_POLAR_CHECKOUT_URL: ${{ secrets.VITE_POLAR_CHECKOUT_URL }}
+          VITE_DOCS_URL: ${{ vars.VITE_DOCS_URL }}
+          VITE_CHANGELOG_URL: ${{ vars.VITE_CHANGELOG_URL }}
+          VITE_TUTORIAL_VIDEO_URL: ${{ secrets.VITE_TUTORIAL_VIDEO_URL }}
+          VITE_FEATURE_REQUEST_URL: ${{ vars.VITE_FEATURE_REQUEST_URL }}
+      - run: npm run pack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stream-bunny-plugin-${{ github.ref_name }}
+          path: plugin/plugin.zip

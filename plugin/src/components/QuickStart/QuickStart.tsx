@@ -2,7 +2,7 @@ import * as React from "react"
 
 import { ExternalLinkIcon, MonitorPlayIcon } from "@/icons"
 import { Button } from "@/components/Button/Button"
-import { URL_BUNNY_REF } from "@/copy"
+import { URL_BUNNY_REF, URL_BUNNY_SETUP_IDS } from "@/copy"
 
 import styles from "./QuickStart.module.css"
 
@@ -56,7 +56,18 @@ export function QuickStart({ onOpenTutorial }: { onOpenTutorial: () => void }) {
                     <span className={styles.title}>Paste your Stream API info</span>
                 </div>
                 <div className={styles.body}>
-                    <p>CDN Hostname, Video Library ID, and Video ID — from your Bunny dashboard.</p>
+                    <p>
+                        CDN Hostname, Video Library ID, and Video ID — from your Bunny dashboard.{" "}
+                        <a
+                            className={styles.docLink}
+                            href={URL_BUNNY_SETUP_IDS}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            Where to find them
+                        </a>
+                    </p>
                 </div>
             </li>
             <li className={styles.card}>

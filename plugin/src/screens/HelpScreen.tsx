@@ -5,8 +5,8 @@ import { ArrowUpRightIcon, FileTextIcon, MonitorPlayIcon } from "@/icons"
 import {
     PLUGIN_VERSION,
     URL_CHANGELOG,
+    URL_DOCS,
     URL_FEATURE_REQUEST,
-    URL_README,
     URL_REPO,
     URL_SUPPORT_EMAIL,
 } from "@/copy"
@@ -19,7 +19,7 @@ type Resource = {
 }
 
 const RESOURCES: Resource[] = [
-    { label: "Documentation", href: URL_README },
+    { label: "Documentation", href: URL_DOCS },
     { label: "Changelog", href: URL_CHANGELOG },
     { label: "Request a feature", href: URL_FEATURE_REQUEST },
     { label: "Open source on GitHub", href: URL_REPO },

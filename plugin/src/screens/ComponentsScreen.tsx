@@ -3,12 +3,14 @@ import { Draggable, framer, type DragCompleteResult } from "framer-plugin"
 
 import { Badge } from "@/components/Badge/Badge"
 import { Button } from "@/components/Button/Button"
+import { CodeOverrideInfo } from "@/components/CodeOverrideInfo/CodeOverrideInfo"
 import { InputWithIcon } from "@/components/Input/Input"
 import { ScreenHeader } from "@/components/ScreenHeader/ScreenHeader"
 import { SectionHeader } from "@/components/SectionHeader/SectionHeader"
 import {
     ClockIcon,
     CogIcon,
+    FileTextIcon,
     GripVerticalIcon,
     LockIcon,
     SearchIcon,
@@ -17,9 +19,22 @@ import {
 import {
     BADGE_FREE,
     BADGE_PRO,
+    CODE_OVERRIDE_ADD_TO_PROJECT,
+    CODE_OVERRIDE_ADD_SUCCESS,
+    CODE_OVERRIDE_ADDING,
+    CODE_OVERRIDE_ALREADY_PRESENT,
+    CODE_OVERRIDE_NOT_CONFIGURED,
+    CODE_OVERRIDE_IN_PROJECT,
     SCREEN_COMPONENTS_TITLE,
     SEARCH_PLACEHOLDER,
 } from "@/copy"
+import {
+    canAddIdleFadeFromLibrary,
+    ensureCodeOverrideInProject,
+    IdleFadeLibraryNotConfiguredError,
+    idleFadeUtilityFilenames,
+} from "@/lib/add-code-utility-files"
+import { codeFileBasename } from "@/lib/code-file-path"
 import {
     catalogRowKey,
     COMPONENT_CATALOG,
@@ -36,7 +51,20 @@ function matchesQuery(entry: CatalogEntry, q: string): boolean {
     if (entry.kind === "module") {
         return entry.baseName.toLowerCase().includes(s) || entry.subtitle.toLowerCase().includes(s)
     }
+    if (entry.kind === "code-override") {
+        return `${entry.title} ${entry.subtitle}`.toLowerCase().includes(s)
+    }
     return `${entry.displayName} ${entry.subtitle}`.toLowerCase().includes(s)
+}
+
+function codeOverrideFilesPresent(
+    basenames: Set<string>,
+    handlerId: "bunny-idle-fade"
+): boolean {
+    if (handlerId === "bunny-idle-fade") {
+        return idleFadeUtilityFilenames().every((name) => basenames.has(name))
+    }
+    return false
 }
 
 export function ComponentsScreen({
@@ -61,7 +89,18 @@ export function ComponentsScreen({
     onUpgradeClick: () => void
 }) {
     const [query, setQuery] = React.useState("")
+    const [projectBasenames, setProjectBasenames] = React.useState<Set<string>>(() => new Set())
+    const [codeOverrideAddingId, setCodeOverrideAddingId] = React.useState<string | null>(null)
     const searchRef = React.useRef<HTMLInputElement>(null)
+
+    const refreshProjectBasenames = React.useCallback(async () => {
+        const files = await framer.getCodeFiles()
+        setProjectBasenames(new Set(files.map((f) => codeFileBasename(f.name))))
+    }, [])
+
+    React.useEffect(() => {
+        void refreshProjectBasenames()
+    }, [refreshProjectBasenames])
 
     React.useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
@@ -85,17 +124,22 @@ export function ComponentsScreen({
         const map: Record<ComponentSectionId, CatalogEntry[]> = {
             player: [],
             controls: [],
-            soon: [],
+            codeOverride: [],
         }
         for (const e of filtered) {
-            const section = e.kind === "module" ? e.section : "soon"
-            map[section].push(e)
+            if (e.kind === "code-override") {
+                map.codeOverride.push(e)
+            } else {
+                map[e.section].push(e)
+            }
         }
-        // Pro-locked entries always render at the bottom of their section so they
-        // don't break the flow of free, draggable controls.
-        const proWeight = (e: CatalogEntry) => (e.kind === "module" && e.pro ? 1 : 0)
-        for (const k of Object.keys(map) as ComponentSectionId[]) {
-            map[k] = [...map[k]].sort((a, b) => proWeight(a) - proWeight(b))
+        const sectionSortWeight = (e: CatalogEntry) => {
+            if (e.kind === "soon") return 2
+            if (e.kind === "module" && e.pro) return 1
+            return 0
+        }
+        for (const k of ["player", "controls"] as const) {
+            map[k] = [...map[k]].sort((a, b) => sectionSortWeight(a) - sectionSortWeight(b))
         }
         return map
     }, [filtered])
@@ -103,6 +147,94 @@ export function ComponentsScreen({
     const renderRow = (entry: CatalogEntry) => {
         const rowKey = catalogRowKey(entry)
         const highlighted = highlightKey === rowKey
+
+        if (entry.kind === "code-override") {
+            const isProLocked = Boolean(entry.pro) && entitlementTier === "free"
+            const inProject = codeOverrideFilesPresent(projectBasenames, entry.handlerId)
+            const adding = codeOverrideAddingId === entry.id
+            const libraryReady = canAddIdleFadeFromLibrary()
+
+            const handleAdd = async () => {
+                if (isProLocked) {
+                    onUpgradeClick()
+                    return
+                }
+                if (inProject || adding || !libraryReady) {
+                    if (!libraryReady) framer.notify(CODE_OVERRIDE_NOT_CONFIGURED)
+                    return
+                }
+                setCodeOverrideAddingId(entry.id)
+                try {
+                    const result = await ensureCodeOverrideInProject(entry.handlerId)
+                    await refreshProjectBasenames()
+                    if (result.created.length === 0 && result.skipped.length > 0) {
+                        framer.notify(CODE_OVERRIDE_ALREADY_PRESENT)
+                    } else {
+                        framer.notify(CODE_OVERRIDE_ADD_SUCCESS)
+                    }
+                } catch (err) {
+                    if (err instanceof IdleFadeLibraryNotConfiguredError) {
+                        framer.notify(CODE_OVERRIDE_NOT_CONFIGURED)
+                    } else {
+                        framer.notify(err instanceof Error ? err.message : "Could not add code files")
+                    }
+                } finally {
+                    setCodeOverrideAddingId(null)
+                }
+            }
+
+            return (
+                <div
+                    key={rowKey}
+                    className={cn(styles.codeOverrideRow, isProLocked && styles.codeOverrideRowLocked)}
+                >
+                    <span className={styles.rowIcon} aria-hidden>
+                        <FileTextIcon />
+                    </span>
+                    <span className={styles.codeOverrideLabel}>
+                        <span
+                            className={cn(styles.rowTitle, isProLocked && styles.lockedTitle)}
+                        >
+                            {entry.title}
+                        </span>
+                        <CodeOverrideInfo subtitle={entry.subtitle} />
+                    </span>
+                    {isProLocked ? (
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            className={styles.codeOverrideBtn}
+                            onClick={onUpgradeClick}
+                        >
+                            <span className={styles.proLock}>
+                                <LockIcon />
+                                Pro
+                            </span>
+                        </Button>
+                    ) : (
+                        <Button
+                            variant="secondary"
+                            className={styles.codeOverrideBtn}
+                            disabled={inProject || adding || !libraryReady}
+                            title={
+                                !libraryReady
+                                    ? CODE_OVERRIDE_NOT_CONFIGURED
+                                    : inProject
+                                      ? CODE_OVERRIDE_ALREADY_PRESENT
+                                      : undefined
+                            }
+                            onClick={() => void handleAdd()}
+                        >
+                            {adding
+                                ? CODE_OVERRIDE_ADDING
+                                : inProject
+                                  ? CODE_OVERRIDE_IN_PROJECT
+                                  : CODE_OVERRIDE_ADD_TO_PROJECT}
+                        </Button>
+                    )}
+                </div>
+            )
+        }
 
         if (entry.kind === "soon") {
             return (
@@ -241,13 +373,19 @@ export function ComponentsScreen({
                         </div>
                         <div className={styles.rowList}>{sections.controls.map(renderRow)}</div>
                     </section>
-                    <section className={styles.sectionCard}>
-                        <div className={styles.sectionHead}>
-                            <SectionHeader>Coming Soon</SectionHeader>
-                            <span className={styles.sectionCount}>{sections.soon.length}</span>
-                        </div>
-                        <div className={styles.rowList}>{sections.soon.map(renderRow)}</div>
-                    </section>
+                    {sections.codeOverride.length > 0 ? (
+                        <section className={styles.sectionCard}>
+                            <div className={styles.sectionHead}>
+                                <SectionHeader>Code Override</SectionHeader>
+                                <span className={styles.sectionCount}>
+                                    {sections.codeOverride.length}
+                                </span>
+                            </div>
+                            <div className={styles.rowList}>
+                                {sections.codeOverride.map(renderRow)}
+                            </div>
+                        </section>
+                    ) : null}
                 </div>
             )}
         </div>

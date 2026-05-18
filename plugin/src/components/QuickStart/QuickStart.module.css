@@ -72,3 +72,13 @@
 .subLine {
     color: var(--text-locked);
 }
+
+.docLink {
+    color: var(--text-link);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.docLink:hover {
+    color: var(--accent-hover);
+}

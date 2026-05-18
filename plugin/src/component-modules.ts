@@ -37,6 +37,32 @@ export const TEMPLATE_MODULE_KEYS = [
 
 export type TemplateModuleKey = (typeof TEMPLATE_MODULE_KEYS)[number]
 
+/**
+ * Published from the Stream Bunny library (not draggable). Used for code-override
+ * re-exports and to keep a single BunnyVideoStore across the site.
+ */
+export const UTILITY_MODULE_KEYS = ["BunnyVideoStore", "BunnyIdleFade"] as const
+
+export type UtilityModuleKey = (typeof UTILITY_MODULE_KEYS)[number]
+
+export function resolveUtilityModuleUrl(key: UtilityModuleKey): string | undefined {
+    return envModuleUrl(key)
+}
+
+export function resolveIdleFadeModuleUrl(): string | undefined {
+    return resolveUtilityModuleUrl("BunnyIdleFade")
+}
+
+export function resolveStoreModuleUrl(): string | undefined {
+    return resolveUtilityModuleUrl("BunnyVideoStore")
+}
+
+/** Built-in fallback template URLs used when env vars are not configured yet. */
+const DEFAULT_TEMPLATE_URL_MAP: Partial<Record<TemplateModuleKey, string>> = {
+    BunnyTemplateCinemaHero:
+        "https://framer.com/m/SB-Default-Template-h2n29c.js@pVOTNbKPwZApyLFPqfMN",
+}
+
 function envModuleUrl(key: string): string | undefined {
     const envKey = `VITE_SB_MODULE_${key}`
     const raw = (import.meta.env as Record<string, string | undefined>)[envKey]
@@ -68,9 +94,17 @@ export function resolvePublishedModuleUrlMap(): PublishedModulesResult {
     return { ok: true, map }
 }
 
-/** `true` = legacy mode: inject raw `.tsx` into the project (maintainers only; never marketplace). */
+/**
+ * `true` = inject raw `.tsx` into the user project (maintainers / local dev).
+ * Defaults to on during `vite` dev so Code Override → Add to project works without
+ * publishing `BunnyIdleFade` first. Set `VITE_STREAM_BUNNY_EMBED_SOURCES=false` to
+ * test the hosted re-export flow locally.
+ */
 export function useEmbeddedLocalSources(): boolean {
-    return import.meta.env.VITE_STREAM_BUNNY_EMBED_SOURCES === "true"
+    const raw = import.meta.env.VITE_STREAM_BUNNY_EMBED_SOURCES
+    if (raw === "true") return true
+    if (raw === "false") return false
+    return import.meta.env.DEV
 }
 
 /**
@@ -81,7 +115,7 @@ export function useEmbeddedLocalSources(): boolean {
 export function resolveTemplateModuleUrlMap(): Record<TemplateModuleKey, string | undefined> {
     const map = {} as Record<TemplateModuleKey, string | undefined>
     for (const key of TEMPLATE_MODULE_KEYS) {
-        map[key] = envModuleUrl(key)
+        map[key] = envModuleUrl(key) ?? DEFAULT_TEMPLATE_URL_MAP[key]
     }
     return map
 }

@@ -21,7 +21,7 @@ import {
     WHATS_NEW_LABEL,
     WHATS_NEW_TITLE,
     WHATS_NEW_VERSION,
-    URL_README,
+    URL_DOCS,
 } from "@/copy"
 import { FREE_TIER_MAX_CANVAS_INSERTS, type EntitlementSnapshot } from "@/lib/entitlement"
 import type { ScreenId } from "@/lib/navigation"
@@ -108,7 +108,7 @@ export function Dashboard({
                 <p className={styles.heroSubtitle}>{DASHBOARD_PAPER_HERO_BODY}</p>
                 <a
                     className={styles.learnMore}
-                    href={URL_README}
+                    href={URL_DOCS}
                     target="_blank"
                     rel="noopener noreferrer"
                 >

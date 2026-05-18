@@ -10,6 +10,8 @@ import { useMemo, useSyncExternalStore, type MutableRefObject } from "react"
 export type BunnyVideoStoreState = {
     play: boolean
     muted: boolean
+    /** True after explicit user unmute (volume button/slider) so playback can override Framer `muted` prop lock. */
+    userUnmuted: boolean
     volume: number
     volumeBeforeMute: number
     controlsVisible: boolean
@@ -37,6 +39,7 @@ export function createInitialBunnyVideoState(): BunnyVideoStoreState {
     return {
         play: false,
         muted: false,
+        userUnmuted: false,
         volume: 100,
         volumeBeforeMute: 100,
         controlsVisible: true,
@@ -66,7 +69,17 @@ type StoreEntry = {
     hoverLeaveTimeoutRef: MutableRefObject<ReturnType<typeof setTimeout> | null>
 }
 
-const registry = new Map<string, StoreEntry>()
+const REGISTRY_GLOBAL_KEY = "__bunnyStreamVideoStoreRegistry__"
+
+function getStoreRegistry(): Map<string, StoreEntry> {
+    const g = globalThis as typeof globalThis & {
+        [REGISTRY_GLOBAL_KEY]?: Map<string, StoreEntry>
+    }
+    if (!g[REGISTRY_GLOBAL_KEY]) {
+        g[REGISTRY_GLOBAL_KEY] = new Map()
+    }
+    return g[REGISTRY_GLOBAL_KEY]
+}
 
 export function normalizeStoreKey(storeId: string): string {
     return (storeId || "default").trim() || "default"
@@ -171,7 +184,7 @@ function applyAudioFloorToStores(): void {
         notifyAudioFloorSubs()
         return
     }
-    for (const [key, entry] of registry) {
+    for (const [key, entry] of getStoreRegistry()) {
         const floorMuted = normalizeStoreKey(key) !== owner
         const snap = entry.getSnapshot()
         if (snap.muted !== floorMuted) {
@@ -225,7 +238,8 @@ function createStoreEntry(): StoreEntry {
 }
 
 function getOrCreateStoreEntry(storeId: string): StoreEntry {
-    const key = storeId || "default"
+    const key = normalizeStoreKey(storeId)
+    const registry = getStoreRegistry()
     if (!registry.has(key)) {
         registry.set(key, createStoreEntry())
     }
@@ -301,7 +315,7 @@ export function useBunnyVideoStore(storeId: string = "default"): readonly [
     BunnyVideoStoreState,
     (partial: Partial<BunnyVideoStoreState>) => void,
 ] {
-    const key = storeId || "default"
+    const key = normalizeStoreKey(storeId)
     const entry = useMemo(() => getOrCreateStoreEntry(key), [key])
     const store = useSyncExternalStore(entry.subscribe, entry.getSnapshot, entry.getSnapshot)
     return [store, entry.setStore] as const

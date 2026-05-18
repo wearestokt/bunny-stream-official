@@ -1,10 +1,11 @@
 {
   "name": "bunny-stream-official",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.4.0",
   "type": "module",
   "scripts": {
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "docs:components": "node scripts/generate-component-docs.mjs"
   },
   "devDependencies": {
     "@vercel/node": "^3.2.0",

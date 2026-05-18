@@ -1,0 +1,10 @@
+title: Stream Bunny
+description: Documentation for the Stream Bunny Framer plugin and Bunny Stream components
+theme: jekyll-theme-primer
+markdown: GFM
+plugins:
+  - jekyll-relative-links
+
+relative_links:
+  enabled: true
+  collections: true

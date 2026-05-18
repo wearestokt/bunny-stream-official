@@ -469,8 +469,9 @@ export function BunnyVideoPlayer(props: {
     storeRef.current = store
     const autoplayRef = useRef(autoplay)
     autoplayRef.current = autoplay
-    const framerMutedRef = useRef(muted)
-    framerMutedRef.current = muted
+    const framerMutedLocked = muted && !store.userUnmuted
+    const framerMutedLockedRef = useRef(framerMutedLocked)
+    framerMutedLockedRef.current = framerMutedLocked
     const playOnHoverRef = useRef(playOnHover)
     playOnHoverRef.current = playOnHover
     const controlsVisibleRef = useRef(store.controlsVisible)
@@ -553,6 +554,10 @@ export function BunnyVideoPlayer(props: {
     const [playbackMuteFallback, setPlaybackMuteFallback] = useState(false)
     const playbackMuteFallbackRef = useRef(false)
     playbackMuteFallbackRef.current = playbackMuteFallback
+    /** Explicit user unmute should win over temporary autoplay mute fallbacks. */
+    const userRequestedAudible = store.userUnmuted && !store.muted
+    const userRequestedAudibleRef = useRef(userRequestedAudible)
+    userRequestedAudibleRef.current = userRequestedAudible
 
     /** Do not mount `<video>` until lazy viewport gate passes — avoids native `.m3u8` load + `onError` before HLS.js attaches. */
     const shouldMountVideo = shouldLoadVideo && Boolean(streamUrl) && (!lazyLoad || readyToLoad)
@@ -608,10 +613,10 @@ export function BunnyVideoPlayer(props: {
         if (!v || !storeRef.current.play || !v.paused) return
         if (!pageLoadReadyRef.current) return
         const mutedPlayback =
-            framerMutedRef.current ||
+            framerMutedLockedRef.current ||
             storeRef.current.muted ||
             (useLoudAutoplayRef.current && loudPretendMutedRef.current) ||
-            playbackMuteFallbackRef.current
+            (playbackMuteFallbackRef.current && !userRequestedAudibleRef.current)
         const minReady = mutedPlayback
             ? HTMLMediaElement.HAVE_FUTURE_DATA
             : HTMLMediaElement.HAVE_ENOUGH_DATA
@@ -675,10 +680,10 @@ export function BunnyVideoPlayer(props: {
         if (!pageLoadReadyRef.current) return false
         if (canPlayThroughRef.current) return true
         const mutedPlayback =
-            framerMutedRef.current ||
+            framerMutedLockedRef.current ||
             storeRef.current.muted ||
             (useLoudAutoplayRef.current && loudPretendMutedRef.current) ||
-            playbackMuteFallbackRef.current
+            (playbackMuteFallbackRef.current && !userRequestedAudibleRef.current)
         const minReady = mutedPlayback
             ? HTMLMediaElement.HAVE_FUTURE_DATA
             : HTMLMediaElement.HAVE_ENOUGH_DATA
@@ -699,7 +704,7 @@ export function BunnyVideoPlayer(props: {
     }
     const scheduleAudibleAssertUntilHeard = useCallback(() => {
         if (!getAudioUnlocked()) return
-        if (framerMutedRef.current) return
+        if (framerMutedLockedRef.current) return
         if (playOnHoverRef.current) return
         cancelAudibleAssertLoop()
         const maxFrames = 36
@@ -747,10 +752,10 @@ export function BunnyVideoPlayer(props: {
             return
         }
         const videoMuted =
-            framerMutedRef.current ||
+            framerMutedLockedRef.current ||
             storeRef.current.muted ||
             (useLoudAutoplayRef.current && loudPretendMutedRef.current) ||
-            playbackMuteFallbackRef.current
+            (playbackMuteFallbackRef.current && !userRequestedAudibleRef.current)
         v.playbackRate = 1
         if (videoMuted) {
             v.muted = true
@@ -767,7 +772,12 @@ export function BunnyVideoPlayer(props: {
                     playbackMuteFallbackRef.current = false
                 }
                 const el = videoRef.current
-                if (el?.muted && getAudioUnlocked() && !framerMutedRef.current && !storeRef.current.muted) {
+                if (
+                    el?.muted &&
+                    getAudioUnlocked() &&
+                    !framerMutedLockedRef.current &&
+                    !storeRef.current.muted
+                ) {
                     scheduleAudibleAssertUntilHeard()
                 }
             })
@@ -975,7 +985,7 @@ export function BunnyVideoPlayer(props: {
                             storeRef.current.play &&
                             autoplayRef.current &&
                             !playOnHoverRef.current &&
-                            !framerMutedRef.current
+                            !framerMutedLockedRef.current
                         ) {
                             /* Store says play (e.g. autoplay) but element can stay paused (policy / hand-off). */
                             requestAnimationFrame(() => {
@@ -1148,7 +1158,7 @@ export function BunnyVideoPlayer(props: {
         return subscribeAudioFloor((owner) => {
             const my = normalizeStoreKey(storeId)
             if (owner == null) {
-                setStore({ muted: framerMutedRef.current })
+                setStore({ muted: framerMutedLockedRef.current })
                 return
             }
             if (owner !== my) return
@@ -1322,7 +1332,7 @@ export function BunnyVideoPlayer(props: {
             muted ||
             store.muted ||
             (useLoudAutoplay && loudPretendMuted) ||
-            playbackMuteFallback
+            (playbackMuteFallback && !store.userUnmuted)
         if (videoMuted) {
             video.muted = true
         } else {
@@ -1379,6 +1389,30 @@ export function BunnyVideoPlayer(props: {
         loudPretendMuted,
         playbackMuteFallback,
     ])
+
+    /**
+     * If the user explicitly unmutes while playback is already running, immediately clear any
+     * temporary fallback mute lock and re-assert audible playback now (no 0:00 restart needed).
+     */
+    useEffect(() => {
+        if (!store.userUnmuted || store.muted) return
+        if (playbackMuteFallbackRef.current) {
+            playbackMuteFallbackRef.current = false
+            setPlaybackMuteFallback(false)
+        }
+        if (loudPretendMutedRef.current) {
+            loudPretendMutedRef.current = false
+            setLoudPretendMuted(false)
+        }
+        const v = videoRef.current
+        if (!v) return
+        v.muted = false
+        v.volume = (store.volume ?? 100) / 100
+        if (store.play) {
+            v.playbackRate = 1
+            void v.play().catch(() => {})
+        }
+    }, [store.userUnmuted, store.muted, store.volume, store.play])
 
     useEffect(() => {
         if (!useLoudAutoplay || !store.play || !loudPretendMuted) return
@@ -1893,7 +1927,7 @@ export function BunnyVideoPlayer(props: {
         heardPlayingOnceRef.current = true
         setStore({ play: true })
         scheduleLoudAutoplayUnmute()
-        if (getAudioUnlocked() && !framerMutedRef.current) {
+        if (getAudioUnlocked() && !framerMutedLockedRef.current) {
             scheduleAudibleAssertUntilHeard()
         }
     }, [setStore, scheduleLoudAutoplayUnmute, scheduleAudibleAssertUntilHeard])
@@ -2133,6 +2167,7 @@ export function BunnyVideoPlayer(props: {
     return (
         <div
             ref={containerRef}
+            data-bunny-player
             role="button"
             tabIndex={tapToPlay || playOnHover ? 0 : undefined}
             onClick={handleTapToPlay}
@@ -2183,7 +2218,13 @@ export function BunnyVideoPlayer(props: {
                         poster={posterForUi || undefined}
                         preload={isMobile || lazyLoad ? "metadata" : "auto"}
                         loop={loop}
-                        muted={!!(muted || (useLoudAutoplay && loudPretendMuted) || playbackMuteFallback)}
+                        muted={
+                            !!(
+                                framerMutedLocked ||
+                                (useLoudAutoplay && loudPretendMuted) ||
+                                (playbackMuteFallback && !store.userUnmuted)
+                            )
+                        }
                         autoPlay={autoplay && !useLoudAutoplay}
                         playsInline
                         controls={showControls && store.fullscreen}
@@ -2227,9 +2268,9 @@ export function BunnyVideoPlayer(props: {
 }
 
 BunnyVideoPlayer.defaultProps = {
-    videoId: "",
-    libraryId: "",
-    pullZoneHostname: "",
+    videoId: "44626466-5195-4e9f-9f25-961994cd10df",
+    libraryId: "235256",
+    pullZoneHostname: "vz-a81672d8-ea0.b-cdn.net",
     autoplay: false,
     loop: false,
     muted: false,
@@ -2258,9 +2299,17 @@ addPropertyControls(BunnyVideoPlayer, {
         title: "Content",
         hidden: () => true,
     },
-    videoId: { type: ControlType.String, title: "Video ID" },
-    libraryId: { type: ControlType.String, title: "Library ID" },
-    pullZoneHostname: { type: ControlType.String, title: "CDN host name" },
+    videoId: {
+        type: ControlType.String,
+        title: "Video ID",
+        defaultValue: "44626466-5195-4e9f-9f25-961994cd10df",
+    },
+    libraryId: { type: ControlType.String, title: "Library ID", defaultValue: "235256" },
+    pullZoneHostname: {
+        type: ControlType.String,
+        title: "CDN host name",
+        defaultValue: "vz-a81672d8-ea0.b-cdn.net",
+    },
     previewOnCanvas: {
         type: ControlType.Boolean,
         title: "Preview on Canvas",

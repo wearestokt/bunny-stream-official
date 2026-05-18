@@ -21,7 +21,7 @@ type TemplateEntry = {
     /**
      * Upstream library export name. When the URL exists in `templateUrlMap`,
      * the card becomes a real `<Draggable>` and inserts that single component.
-     * Until then, Cinema Hero falls back to the legacy bundle insert below.
+     * Until then, SB - Basic falls back to the legacy bundle insert below.
      */
     moduleKey: TemplateModuleKey
     /**
@@ -36,7 +36,7 @@ type TemplateEntry = {
 const TEMPLATES: TemplateEntry[] = [
     {
         id: "cinema-hero",
-        title: "Cinema Hero",
+        title: "SB - Basic",
         sub: "Uses 5 inserts",
         pro: false,
         moduleKey: "BunnyTemplateCinemaHero",
@@ -226,6 +226,11 @@ export function TemplatesScreen({
                                     framer.notify(result.reason ?? "Drop failed")
                                     return
                                 }
+                                const bundleCost = entry.legacyBundle?.length ?? 0
+                                if (bundleCost > 1) {
+                                    // `onInsertSuccess` records one insert; add the remaining bundle cost.
+                                    recordTemplateInsert(bundleCost - 1)
+                                }
                                 void framer.setSelection([result.nodeId])
                                 onInsertSuccess(entry.moduleKey, entry.title)
                             }}
@@ -236,7 +241,7 @@ export function TemplatesScreen({
                                 className={styles.cardBtn}
                                 onClick={() => {
                                     /**
-                                     * Click is a convenience fallback for Cinema Hero (inserts the
+                                     * Click is a convenience fallback for SB - Basic (inserts the
                                      * full multi-component bundle in place of the not-yet-existing
                                      * template). Other templates rely on drag-and-drop only.
                                      */

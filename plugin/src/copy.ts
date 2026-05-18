@@ -14,7 +14,7 @@ export const DASHBOARD_PAPER_LEARN_MORE = "Learn more"
 
 export const WHATS_NEW_LABEL = "WHAT'S NEW · MAY 5"
 
-export const WHATS_NEW_VERSION = "v1.4"
+export const WHATS_NEW_VERSION = "v1.4.0"
 
 export const WHATS_NEW_TITLE = "Quality Picker for HLS streams"
 
@@ -129,6 +129,15 @@ export const TAG_COMING_SOON = "Coming soon"
 /** Components screen */
 export const SCREEN_COMPONENTS_TITLE = "Components"
 
+export const CODE_OVERRIDE_ADD_TO_PROJECT = "Add to project"
+export const CODE_OVERRIDE_IN_PROJECT = "In project"
+export const CODE_OVERRIDE_ADDING = "Adding…"
+export const CODE_OVERRIDE_ADD_SUCCESS =
+    "Added BunnyIdleFade.tsx (re-exports from the Stream Bunny library). Apply withBunnyIdleFade as a Code Override."
+export const CODE_OVERRIDE_ALREADY_PRESENT = "BunnyIdleFade.tsx is already in this project."
+export const CODE_OVERRIDE_NOT_CONFIGURED =
+    "Publish BunnyIdleFade from the Stream Bunny library and set VITE_SB_MODULE_BunnyIdleFade in the plugin build."
+
 export const SCREEN_COMPONENTS_SUB = "Drag any item onto the canvas."
 
 export const SEARCH_PLACEHOLDER = "Search components"
@@ -232,7 +241,7 @@ export const HELP_STATUS_OK = "All systems operational"
 export const HELP_STATUS_VERSION = "v1.4.0 · status"
 
 /** Latest update card */
-export const LATEST_UPDATE_VERSION = "v1.4"
+export const LATEST_UPDATE_VERSION = "v1.4.0"
 
 export const LATEST_UPDATE_TITLE = "Quality picker respects HLS levels"
 
@@ -328,12 +337,35 @@ export const FOOTER_MADE_BY = "Made by"
 export const URL_README =
     "https://github.com/wearestokt/bunny-stream-official/blob/main/README.md"
 
+/** Hosted docs index (GitHub Pages when enabled, else repo `docs/` tree). */
+export const URL_DOCS_DEFAULT =
+    "https://github.com/wearestokt/bunny-stream-official/tree/main/docs"
+
+export const URL_DOCS =
+    (import.meta.env.VITE_DOCS_URL as string | undefined)?.trim() || URL_DOCS_DEFAULT
+
+/** Bunny ID walkthrough — works on GitHub; Pages builds use `VITE_DOCS_URL` + `/bunny-stream-setup#ids`. */
+export const URL_BUNNY_SETUP_IDS = (() => {
+    const docs = URL_DOCS
+    if (docs.includes("github.io")) {
+        return `${docs.replace(/\/$/, "")}/bunny-stream-setup#ids`
+    }
+    if (docs.includes("/tree/") && docs.endsWith("/docs")) {
+        return `${docs.replace("/tree/", "/blob/")}/bunny-stream-setup.md#ids`
+    }
+    return "https://github.com/wearestokt/bunny-stream-official/blob/main/docs/bunny-stream-setup.md#ids"
+})()
+
 export const URL_REPO = "https://github.com/wearestokt/bunny-stream-official"
 
 export const URL_ISSUES = "https://github.com/wearestokt/bunny-stream-official/issues"
 
+export const URL_CHANGELOG_DEFAULT =
+    "https://github.com/wearestokt/bunny-stream-official/blob/main/CHANGELOG.md"
+
 export const URL_CHANGELOG =
-    (import.meta.env.VITE_CHANGELOG_URL as string | undefined)?.trim() || URL_README
+    (import.meta.env.VITE_CHANGELOG_URL as string | undefined)?.trim() ||
+    URL_CHANGELOG_DEFAULT
 
 export const URL_FEATURE_REQUEST =
     (import.meta.env.VITE_FEATURE_REQUEST_URL as string | undefined)?.trim() || URL_ISSUES

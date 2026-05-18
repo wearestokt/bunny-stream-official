@@ -78,33 +78,32 @@
 
 @media (prefers-color-scheme: light) {
     :root {
-        /* Paper is dark-only. Mirror the same values so light-mode doesn't drift. */
-        --bg-base: #000000;
-        --bg-elevated: #111111;
-        --bg-hover: #151515;
-        --bg-active: #1a1a1a;
-        --bg-input: #0a0a0a;
+        --bg-base: #f5f5f5;
+        --bg-elevated: #ffffff;
+        --bg-hover: #ebebeb;
+        --bg-active: #e0e0e0;
+        --bg-input: #ffffff;
 
-        --border-subtle: rgba(255, 255, 255, 0.06);
-        --border-default: rgba(255, 255, 255, 0.10);
-        --border-focus: rgba(255, 255, 255, 0.25);
+        --border-subtle: rgba(0, 0, 0, 0.06);
+        --border-default: rgba(0, 0, 0, 0.12);
+        --border-focus: rgba(0, 0, 0, 0.30);
 
-        --text-primary: #ffffff;
-        --text-secondary: rgba(255, 255, 255, 0.55);
-        --text-tertiary: rgba(255, 255, 255, 0.30);
-        --text-link: #FF4A1F;
+        --text-primary: #111111;
+        --text-secondary: rgba(0, 0, 0, 0.55);
+        --text-tertiary: rgba(0, 0, 0, 0.30);
+        --text-link: #e03e10;
 
-        --accent: #FF4A1F;
-        --accent-hover: #FF5C36;
-        --accent-bg-soft: rgba(255, 74, 31, 0.12);
-        --accent-border-soft: rgba(255, 74, 31, 0.40);
+        --accent: #e03e10;
+        --accent-hover: #ff4a1f;
+        --accent-bg-soft: rgba(255, 74, 31, 0.10);
+        --accent-border-soft: rgba(255, 74, 31, 0.35);
 
-        --row-locked-bg: rgba(0, 0, 0, 0.30);
-        --overlay-lock: rgba(0, 0, 0, 0.74);
-        --text-locked: rgba(255, 255, 255, 0.55);
-        --text-disabled: rgba(255, 255, 255, 0.30);
+        --row-locked-bg: rgba(0, 0, 0, 0.04);
+        --overlay-lock: rgba(255, 255, 255, 0.88);
+        --text-locked: rgba(0, 0, 0, 0.45);
+        --text-disabled: rgba(0, 0, 0, 0.30);
 
-        --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+        --scrollbar-thumb: rgba(0, 0, 0, 0.12);
     }
 }
 

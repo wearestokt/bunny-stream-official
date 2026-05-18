@@ -14,6 +14,8 @@ interface ImportMetaEnv {
     readonly VITE_SB_MODULE_BunnyTimeDisplay?: string
     readonly VITE_SB_MODULE_BunnyQualityPickerButton?: string
     readonly VITE_SB_MODULE_BunnyFullscreenButton?: string
+    /** Published BunnyIdleFade module (code override re-export). Falls back to bundled source if unset. */
+    readonly VITE_SB_MODULE_BunnyIdleFade?: string
 
     /** Absolute URL of deployed `POST /api/license/validate` (Polar proxy). */
     readonly VITE_LICENSE_VALIDATE_URL?: string
@@ -21,8 +23,10 @@ interface ImportMetaEnv {
     readonly VITE_POLAR_CHECKOUT_URL?: string
     /** MP4 or direct video URL for dashboard tutorial modal */
     readonly VITE_TUTORIAL_VIDEO_URL?: string
-    /** Optional changelog link for Latest update card */
+    /** Optional changelog link for Help / release notes */
     readonly VITE_CHANGELOG_URL?: string
+    /** Optional documentation site (GitHub Pages or hosted docs index) */
+    readonly VITE_DOCS_URL?: string
     /** Feature request / roadmap link (defaults to GitHub issues) */
     readonly VITE_FEATURE_REQUEST_URL?: string
 }

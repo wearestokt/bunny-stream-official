@@ -18,6 +18,13 @@ import timeDisplaySource from "../../components/BunnyTimeDisplay.tsx?raw"
 import qualityPickerSource from "../../components/BunnyQualityPickerButton.tsx?raw"
 // @ts-expect-error - Vite ?raw import
 import fullscreenSource from "../../components/BunnyFullscreenButton.tsx?raw"
+// @ts-expect-error - Vite ?raw import
+import idleFadeSource from "../../components/BunnyIdleFade.tsx?raw"
+
+/** Maintainer embed only — standalone idle override (never marketplace). */
+export const BUNNY_IDLE_FADE_EMBED_FILES: { name: string; code: string }[] = [
+    { name: "BunnyIdleFade.tsx", code: idleFadeSource as string },
+]
 
 export const COMPONENT_FILES: { name: string; code: string }[] = [
     { name: "BunnyVideoStore.tsx", code: storeSource as string },
@@ -28,4 +35,5 @@ export const COMPONENT_FILES: { name: string; code: string }[] = [
     { name: "BunnyTimeDisplay.tsx", code: timeDisplaySource as string },
     { name: "BunnyQualityPickerButton.tsx", code: qualityPickerSource as string },
     { name: "BunnyFullscreenButton.tsx", code: fullscreenSource as string },
+    { name: "BunnyIdleFade.tsx", code: idleFadeSource as string },
 ]

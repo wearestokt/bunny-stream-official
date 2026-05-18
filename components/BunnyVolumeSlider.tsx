@@ -236,7 +236,12 @@ export function BunnyVolumeSlider(props: {
                 setAudioUnlocked(true)
             }
             if (vol <= 0) releaseAudioFloor(storeId)
-            setStore({ volume: vol, muted: vol <= 0 })
+            setStore({
+                volume: vol,
+                muted: vol <= 0,
+                ...(willUnmute ? { play: true, userUnmuted: true } : {}),
+                ...(vol <= 0 ? { userUnmuted: false } : {}),
+            })
         },
         [resolvedMin, resolvedMax, setStore, store.muted, storeId]
     )
@@ -289,10 +294,15 @@ export function BunnyVolumeSlider(props: {
             const restore = Math.max(resolvedMin, Math.min(resolvedMax, restoreFrom))
             claimAudioFloor(storeId)
             setAudioUnlocked(true)
-            setStore({ muted: false, volume: restore > 0 ? restore : Math.max(1, resolvedMin) })
+            setStore({
+                muted: false,
+                userUnmuted: true,
+                play: true,
+                volume: restore > 0 ? restore : Math.max(1, resolvedMin),
+            })
         } else {
             releaseAudioFloor(storeId)
-            setStore({ muted: true, volume: 0, volumeBeforeMute: store.volume })
+            setStore({ muted: true, userUnmuted: false, volume: 0, volumeBeforeMute: store.volume })
         }
     }
 

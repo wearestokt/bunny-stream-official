@@ -56,7 +56,3 @@ The Player builds:
 ## Coming soon (not shipped)
 
 The plugin catalog lists **Captions** and **Chapter markers** as upcoming; they are not in the repo yet.
-
-## Separate product
-
-The **Bunny Image Carousel** lives in [`bunny-image-carousel/`](../bunny-image-carousel/) with its own plugin — not part of Stream Bunny.

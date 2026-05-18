@@ -19,6 +19,6 @@
         "noUnusedParameters": true,
         "noFallthroughCasesInSwitch": true
     },
-    "include": ["src", "components", "types", "bunny-image-carousel"],
-    "exclude": ["node_modules", "bunny-image-carousel/plugin"]
+    "include": ["src", "components", "types"],
+    "exclude": ["node_modules"]
 }

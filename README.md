@@ -30,7 +30,6 @@ Framer code components and plugin for **[Bunny Stream](https://bunny.net/stream)
 | [`components/`](components/) | Player, store, controls |
 | [`plugin/`](plugin/) | Stream Bunny Framer plugin |
 | [`docs/`](docs/) | User documentation hub |
-| [`bunny-image-carousel/`](bunny-image-carousel/) | Separate image carousel plugin (optional) |
 
 ## License
 

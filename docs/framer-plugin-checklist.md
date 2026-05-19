@@ -21,22 +21,48 @@ Source: [framer.com/plugin-requirements](https://www.framer.com/plugin-requireme
 
 - [ ] `plugin/package.json` version matches `PLUGIN_VERSION` in `plugin/src/copy.ts` (e.g. **1.4.1** / **v1.4.1**)
 - [ ] [CHANGELOG.md](../CHANGELOG.md) updated for the release
-- [ ] `npm run pack` in `plugin/` produces `plugin.zip`
+- [ ] `npm run pack` in `plugin/` produces **`Stream Bunny plugin.zip`**
 - [ ] Release build has every `VITE_SB_MODULE_*` set — **not** `VITE_STREAM_BUNNY_EMBED_SOURCES=true`
 
 ## Release environment
 
-Set in CI or local release `.env` before `npm run build` / `pack`:
+Library module URLs, license API, and Polar checkout are **baked into production builds** by default (`plugin/src/component-modules.ts`, `plugin/src/lib/build-env.ts`). You only need env overrides when republishing components or changing checkout.
+
+Optional overrides in CI or `plugin/.env.local` before `npm run build` / `pack`:
 
 | Variable | Purpose |
 | --- | --- |
-| `VITE_SB_MODULE_*` | Published Framer module URLs for each component |
-| `VITE_LICENSE_VALIDATE_URL` | Deployed Polar license API |
-| `VITE_POLAR_CHECKOUT_URL` | Checkout for Pro |
+| `VITE_SB_MODULE_*` | Override published Framer module URLs after republishing |
+| `VITE_LICENSE_VALIDATE_URL` | Override license API URL |
+| `VITE_POLAR_CHECKOUT_URL` | Override Polar checkout URL |
 | `VITE_DOCS_URL` | Hosted docs (e.g. GitHub Pages) |
 | `VITE_CHANGELOG_URL` | Changelog URL (repo `CHANGELOG.md` or Releases) |
 
 See [plugin/.env.example](../plugin/.env.example).
+
+## Framer reviewer notes (paste into Marketplace submission)
+
+Include this in the submission **review notes** field so Framer can test Pro and inserts without contacting support:
+
+```text
+Stream Bunny — reviewer quick start
+
+1. Open the plugin → Library tab. Drag “Video Player” (or any control) onto the canvas.
+2. Select the player → paste a Bunny.net Stream Library ID + Video ID in the property panel (any public Stream video works).
+3. Use Preview to confirm HLS playback.
+
+Free tier: 5 canvas inserts per workspace (enough to verify Library + Templates).
+
+Pro / Quality Picker / extra templates:
+- Account → “Have a license?” → paste: SB-REVW-FRAM-MARK → Activate
+  (Framer review license — unlimited inserts, Quality Picker, Pro templates)
+
+Cinema Hero template: Templates tab → SB - Basic (free).
+
+Support: hello@wearestokt.com
+```
+
+After approval, rotate or disable the review key via `FRAMER_REVIEW_LICENSE_KEY` on the license API deployment if desired.
 
 ## Marketplace listing
 

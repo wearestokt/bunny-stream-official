@@ -3,6 +3,8 @@
  * Set `VITE_LICENSE_VALIDATE_URL` to your deployed `/api/license/validate` absolute URL.
  */
 
+import { resolveLicenseValidateUrl } from "@/lib/build-env"
+
 export type LicenseValidateResponse =
     | {
           ok: true
@@ -13,9 +15,7 @@ export type LicenseValidateResponse =
     | { ok: false; error: string; status?: number }
 
 function getValidateUrl(): string | undefined {
-    const raw = import.meta.env.VITE_LICENSE_VALIDATE_URL as string | undefined
-    if (typeof raw === "string" && raw.trim().startsWith("http")) return raw.trim()
-    return undefined
+    return resolveLicenseValidateUrl()
 }
 
 export async function validateLicenseRemote(key: string, instanceId: string): Promise<LicenseValidateResponse> {

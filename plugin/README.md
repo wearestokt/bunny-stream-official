@@ -8,7 +8,7 @@ The plugin UI follows [CURSOR-framer-plugin.md](../CURSOR-framer-plugin.md): Int
 
 ## Hosted components (default)
 
-The marketplace build does **not** add `.tsx` files to user projects. Set `VITE_SB_MODULE_*` to each component’s Framer **Copy URL**, then `npm run build` / `npm run pack`.
+The marketplace build does **not** add `.tsx` files to user projects (except the optional Idle Fade code-override helper). Published module URLs, license API, and Polar checkout are **baked in** by default — override via `VITE_SB_MODULE_*` / `VITE_LICENSE_VALIDATE_URL` / `VITE_POLAR_CHECKOUT_URL` when republishing, then `npm run build` / `npm run pack`.
 
 `VITE_STREAM_BUNNY_EMBED_SOURCES=true` is **maintainers only** — never ship marketplace builds with embed mode.
 
@@ -34,12 +34,13 @@ Troubleshooting: [Framer plugin troubleshooting](https://www.framer.com/develope
 npm run pack
 ```
 
-Produces `plugin.zip`. Before packing:
+Produces **`Stream Bunny plugin.zip`** (Framer marketplace upload). Before packing:
 
 - [ ] [`CHANGELOG.md`](../CHANGELOG.md) has a new semver entry for this release
 - [ ] `package.json` version matches `PLUGIN_VERSION` in `src/copy.ts` (and root `package.json`)
 - [ ] Dashboard / Help version strings in `copy.ts` updated if the release is user-visible
-- [ ] All `VITE_SB_MODULE_*` set; embed mode **off**
+- [ ] Embed mode **off** (`VITE_STREAM_BUNNY_EMBED_SOURCES=false` or unset)
+- [ ] Framer review notes pasted from [docs/framer-plugin-checklist.md](../docs/framer-plugin-checklist.md) (includes Pro test license)
 - [ ] Optional: `VITE_DOCS_URL`, `VITE_CHANGELOG_URL` for Help links ([docs/framer-plugin-checklist.md](../docs/framer-plugin-checklist.md))
 
 ## Release URLs (Help screen)

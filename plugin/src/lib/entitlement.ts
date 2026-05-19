@@ -4,6 +4,7 @@
  * Storage is localStorage — best-effort client-side (see product ToS).
  */
 
+import { resolveLicenseValidateUrl } from "@/lib/build-env"
 import { isDevToolsUiEnabled } from "@/lib/dev-tools"
 import { validateLicenseRemote } from "@/lib/license-client"
 
@@ -193,7 +194,7 @@ export async function tryUnlockWithLicenseKey(key: string): Promise<{ ok: boolea
         return { ok: true }
     }
 
-    const hasRemote = typeof import.meta.env.VITE_LICENSE_VALIDATE_URL === "string" && import.meta.env.VITE_LICENSE_VALIDATE_URL.startsWith("http")
+    const hasRemote = !!resolveLicenseValidateUrl()
 
     if (hasRemote) {
         const instanceId = getOrCreateInstanceId()
@@ -219,9 +220,7 @@ export async function tryUnlockWithLicenseKey(key: string): Promise<{ ok: boolea
 export async function maybeRevalidateStoredLicense(): Promise<{ stale: boolean; revoked?: boolean }> {
     if (!isProUnlocked()) return { stale: false }
 
-    const hasRemote =
-        typeof import.meta.env.VITE_LICENSE_VALIDATE_URL === "string" &&
-        import.meta.env.VITE_LICENSE_VALIDATE_URL.startsWith("http")
+    const hasRemote = !!resolveLicenseValidateUrl()
     if (!hasRemote) return { stale: true }
 
     const key = getStoredLicenseKey()

@@ -46,7 +46,7 @@ export const UTILITY_MODULE_KEYS = ["BunnyVideoStore", "BunnyIdleFade"] as const
 export type UtilityModuleKey = (typeof UTILITY_MODULE_KEYS)[number]
 
 export function resolveUtilityModuleUrl(key: UtilityModuleKey): string | undefined {
-    return envModuleUrl(key)
+    return resolveModuleUrl(key)
 }
 
 export function resolveIdleFadeModuleUrl(): string | undefined {
@@ -57,10 +57,36 @@ export function resolveStoreModuleUrl(): string | undefined {
     return resolveUtilityModuleUrl("BunnyVideoStore")
 }
 
+/**
+ * Published Stream Bunny library module URLs (Framer Assets → Copy URL).
+ * Baked into marketplace builds so reviewers and CI packs work without `plugin/.env.local`.
+ * Override any entry via `VITE_SB_MODULE_<ExportName>` at build time when republishing components.
+ */
+const DEFAULT_PUBLISHED_MODULE_URL_MAP: Record<LibraryModuleKey, string> = {
+    BunnyVideoPlayer:
+        "https://framer.com/m/BunnyVideoPlayer-wRCCJC.js#BunnyVideoPlayer",
+    BunnyPlayPauseButton:
+        "https://framer.com/m/BunnyPlayPauseButton-RQ3LVc.js#BunnyPlayPauseButton",
+    BunnyVolumeSlider:
+        "https://framer.com/m/BunnyVolumeSlider-FheZO1.js#BunnyVolumeSlider",
+    BunnyProgressBar:
+        "https://framer.com/m/BunnyProgressBar-jV02z6.js#BunnyProgressBar",
+    BunnyTimeDisplay:
+        "https://framer.com/m/BunnyTimeDisplay-8gM03S.js#BunnyTimeDisplay",
+    BunnyQualityPickerButton:
+        "https://framer.com/m/BunnyQualityPickerButton-vYcuNz.js#BunnyQualityPickerButton",
+    BunnyFullscreenButton:
+        "https://framer.com/m/BunnyFullscreenButton-AOAxST.js#BunnyFullscreenButton",
+}
+
 /** Built-in fallback template URLs used when env vars are not configured yet. */
 const DEFAULT_TEMPLATE_URL_MAP: Partial<Record<TemplateModuleKey, string>> = {
     BunnyTemplateCinemaHero:
         "https://framer.com/m/SB-Default-Template-h2n29c.js@pVOTNbKPwZApyLFPqfMN",
+}
+
+function resolveModuleUrl(key: string, fallback?: string): string | undefined {
+    return envModuleUrl(key) ?? fallback
 }
 
 function envModuleUrl(key: string): string | undefined {
@@ -86,7 +112,7 @@ export function resolvePublishedModuleUrlMap(): PublishedModulesResult {
     const map: Record<string, string> = {}
     const missingKeys: string[] = []
     for (const key of LIBRARY_MODULE_KEYS) {
-        const url = envModuleUrl(key)
+        const url = resolveModuleUrl(key, DEFAULT_PUBLISHED_MODULE_URL_MAP[key])
         if (url) map[key] = url
         else missingKeys.push(key)
     }
@@ -115,7 +141,7 @@ export function useEmbeddedLocalSources(): boolean {
 export function resolveTemplateModuleUrlMap(): Record<TemplateModuleKey, string | undefined> {
     const map = {} as Record<TemplateModuleKey, string | undefined>
     for (const key of TEMPLATE_MODULE_KEYS) {
-        map[key] = envModuleUrl(key) ?? DEFAULT_TEMPLATE_URL_MAP[key]
+        map[key] = resolveModuleUrl(key, DEFAULT_TEMPLATE_URL_MAP[key])
     }
     return map
 }

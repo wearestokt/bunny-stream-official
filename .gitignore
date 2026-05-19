@@ -26,6 +26,7 @@ yarn-error.log*
 
 # Packed plugin / archives
 plugin.zip
+Stream Bunny plugin.zip
 *.zip
 
 # Vercel

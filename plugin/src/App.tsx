@@ -36,6 +36,7 @@ import {
     VideoIcon,
     VolumeIcon,
 } from "@/icons"
+import { resolvePolarCheckoutUrl } from "@/lib/build-env"
 import { isDevToolsUiEnabled } from "@/lib/dev-tools"
 import {
     downgradeToFree,
@@ -112,9 +113,7 @@ function AppShell() {
     const [revokedBanner, setRevokedBanner] = React.useState(false)
 
     const entitlement = getEntitlementSnapshot()
-    const polarCheckout =
-        (import.meta.env.VITE_POLAR_CHECKOUT_URL as string | undefined)?.trim() ||
-        POLAR_CHECKOUT_FALLBACK
+    const polarCheckout = resolvePolarCheckoutUrl() || POLAR_CHECKOUT_FALLBACK
     const embedSourceMode = useEmbeddedLocalSources()
 
     const load = React.useCallback(async () => {

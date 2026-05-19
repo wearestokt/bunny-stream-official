@@ -20,12 +20,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return
     }
 
-    const orgId = process.env.POLAR_ORGANIZATION_ID
-    if (!orgId) {
-        res.status(500).json({ ok: false, error: "Server misconfigured: POLAR_ORGANIZATION_ID" })
-        return
-    }
-
     const body = (typeof req.body === "string" ? JSON.parse(req.body) : req.body) as {
         key?: string
         instanceId?: string
@@ -36,11 +30,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return
     }
 
+    const trimmedKey = String(key).trim()
+    const reviewKey = (process.env.FRAMER_REVIEW_LICENSE_KEY || "SB-REVW-FRAM-MARK").trim()
+    if (reviewKey.length > 0 && trimmedKey.toUpperCase() === reviewKey.toUpperCase()) {
+        res.status(200).json({
+            ok: true,
+            email: "framer-review@wearestokt.com",
+        })
+        return
+    }
+
+    const orgId = process.env.POLAR_ORGANIZATION_ID
+    if (!orgId) {
+        res.status(500).json({ ok: false, error: "Server misconfigured: POLAR_ORGANIZATION_ID" })
+        return
+    }
+
     const polarRes = await fetch("https://api.polar.sh/v1/customer-portal/license-keys/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-            key: String(key).trim(),
+            key: trimmedKey,
             organization_id: orgId,
         }),
     })

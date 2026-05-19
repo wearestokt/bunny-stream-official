@@ -2,6 +2,12 @@
 
 All notable changes to **Stream Bunny** follow [Semantic Versioning](https://semver.org/).
 
+## [1.4.3] - 2026-05-19
+
+### Changed
+
+- Docs: nesting Player + controls inside Framer components, variant animations, and shared **BunnyVideoStore** on the canvas ([`docs/architecture.md`](docs/architecture.md), [`docs/plugin.md`](docs/plugin.md)).
+
 ## [1.4.2] - 2026-05-18
 
 ### Changed

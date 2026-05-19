@@ -34,6 +34,20 @@ See [plugin/README.md](../plugin/README.md): `npm install`, configure `plugin/.e
 
 **BunnyVideoStore** is installed automatically when needed. Do not delete it; the Player and controls depend on it.
 
+## Nest Stream Bunny inside Framer components
+
+> **Important:** You are not limited to dropping a single block on the page. Put Stream Bunny pieces **inside your own Framer components** and drive layout with **variants**, Auto Layout, and component properties.
+
+1. Create or open a **Framer component** (card, hero, slide, and so on).
+2. Place **BunnyVideoPlayer** and any **controls** inside that component’s tree (not only at the page root).
+3. Give the Player and every control the **same Store ID** (default `default`). They share **BunnyVideoStore** automatically: play state, time, volume, and quality stay linked without manual wiring.
+4. On the **wrapper** or on control layers, add **variants** (e.g. idle vs playing vs hover) and animate with Framer (opacity, position, scale). Playback still follows the shared store, so variant transitions can reflect real video state.
+5. Publish or duplicate the component on the canvas. Use a **different Store ID** per instance when each copy is a separate video on the same page.
+
+This is what makes Stream Bunny **fully customizable on the Framer canvas**: adaptive HLS from Bunny.net, UI and motion from your component system.
+
+More detail: [Architecture — Framer components and variants](architecture.md#framer-components-variants-and-the-canvas).
+
 ## Free tier vs Pro
 
 | Feature | Free | Pro |

@@ -1,6 +1,6 @@
 # Stream Bunny documentation
 
-Stream Bunny brings **bunny.net Stream** HLS playback into Framer as real code components — a Player plus separate Controls that share state. No iframe embed.
+Stream Bunny brings **bunny.net Stream** HLS playback into Framer as real code components — a Player plus separate Controls that share state. Nest them inside your own Framer components and use variants; the shared store keeps playback linked while you design the UI on the canvas. No iframe embed.
 
 ## Start here
 

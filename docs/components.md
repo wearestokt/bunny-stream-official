@@ -7,6 +7,7 @@ Framer property panels for Stream Bunny are defined in code via `addPropertyCont
 - **Store ID** — Every control must match the **BunnyVideoPlayer** `storeId` (default `default`).
 - **BunnyVideoStore** — Required dependency; installed by the plugin. Do not remove.
 - **No wiring** — Drop controls near the Player; state is shared automatically.
+- **Inside Framer components** — You can nest the Player and controls inside your own Framer components and use **variants** for UI states (playing, hover, and so on). The shared store keeps playback in sync across layers, so the player stays fully customizable on the canvas. See [Architecture](architecture.md#framer-components-variants-and-the-canvas).
 
 ## BunnyVideoStore
 

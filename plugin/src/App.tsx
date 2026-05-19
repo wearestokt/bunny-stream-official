@@ -36,6 +36,7 @@ import {
     VideoIcon,
     VolumeIcon,
 } from "@/icons"
+import { isDevToolsUiEnabled } from "@/lib/dev-tools"
 import {
     downgradeToFree,
     FREE_TIER_MAX_CANVAS_INSERTS,
@@ -136,7 +137,7 @@ function AppShell() {
             }
             setError(
                 `${ERROR_MODULE_URLS_BODY}${
-                    import.meta.env.DEV ? ` ${ERROR_MODULE_URLS_DEV_HINT}` : ""
+                    isDevToolsUiEnabled() ? ` ${ERROR_MODULE_URLS_DEV_HINT}` : ""
                 }`
             )
             setReady(false)

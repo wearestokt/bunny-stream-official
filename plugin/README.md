@@ -16,6 +16,8 @@ See [`.env.example`](.env.example) for all variables.
 
 ## Development
 
+Internal QA toggles (Account **DEV** / **Reset Quota**, `DEV` license shortcut) are gated by `DEV_TOOLS_ENABLED` in [`src/lib/dev-tools.ts`](src/lib/dev-tools.ts). Keep it **`false`** for release; set to **`true`** only when you need local testing.
+
 ```bash
 npm install
 # plugin/.env.local — VITE_SB_MODULE_* URLs (and optional embed flag)

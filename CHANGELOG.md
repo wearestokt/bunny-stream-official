@@ -2,6 +2,12 @@
 
 All notable changes to **Stream Bunny** follow [Semantic Versioning](https://semver.org/).
 
+## [1.4.2] - 2026-05-18
+
+### Changed
+
+- Disabled maintainer dev tools by default (`DEV_TOOLS_ENABLED` in `plugin/src/lib/dev-tools.ts`) — Account DEV toggles, DEV license shortcut, and upgrade hint hidden for release builds.
+
 ## [1.4.1] - 2026-05-18
 
 ### Changed
@@ -28,5 +34,6 @@ All notable changes to **Stream Bunny** follow [Semantic Versioning](https://sem
 
 Components and the Framer plugin shipped incrementally before this changelog file. See [GitHub commit history](https://github.com/wearestokt/bunny-stream-official/commits/main) for prior work.
 
+[1.4.2]: https://github.com/wearestokt/bunny-stream-official/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/wearestokt/bunny-stream-official/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/wearestokt/bunny-stream-official/compare/v1.3.0...v1.4.0

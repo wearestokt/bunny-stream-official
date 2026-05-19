@@ -13,6 +13,7 @@ import {
     POLAR_CHECKOUT_FALLBACK,
     SCREEN_ACCOUNT_TITLE,
 } from "@/copy"
+import { isDevToolsUiEnabled } from "@/lib/dev-tools"
 import {
     type EntitlementSnapshot,
     FREE_TIER_MAX_CANVAS_INSERTS,
@@ -195,7 +196,7 @@ export function AccountScreen({
                     </>
                 )}
 
-                {import.meta.env.DEV ? (
+                {isDevToolsUiEnabled() ? (
                     <div className={styles.devToggleRow}>
                         <button
                             type="button"

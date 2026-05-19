@@ -4,6 +4,7 @@
  * Storage is localStorage — best-effort client-side (see product ToS).
  */
 
+import { isDevToolsUiEnabled } from "@/lib/dev-tools"
 import { validateLicenseRemote } from "@/lib/license-client"
 
 export const FREE_TIER_MAX_CANVAS_INSERTS = 5
@@ -187,7 +188,7 @@ export function validateLicenseKeyFormat(key: string): boolean {
  */
 export async function tryUnlockWithLicenseKey(key: string): Promise<{ ok: boolean; error?: string }> {
     const trimmed = key.trim()
-    if (import.meta.env.DEV && trimmed.toUpperCase() === "DEV") {
+    if (isDevToolsUiEnabled() && trimmed.toUpperCase() === "DEV") {
         unlockProLocal("DEV", "dev@local")
         return { ok: true }
     }

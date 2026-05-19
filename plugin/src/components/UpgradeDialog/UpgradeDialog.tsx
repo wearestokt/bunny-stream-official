@@ -17,6 +17,7 @@ import {
     UPGRADE_DIALOG_BODY,
     UPGRADE_DIALOG_TITLE,
 } from "@/copy"
+import { isDevToolsUiEnabled } from "@/lib/dev-tools"
 import { tryUnlockWithLicenseKey } from "@/lib/entitlement"
 
 import styles from "./UpgradeDialog.module.css"
@@ -106,7 +107,7 @@ export function UpgradeDialog({
                         {error}
                     </Alert>
                 ) : null}
-                {import.meta.env.DEV ? <p className={styles.devHint}>{LICENSE_DEV_HINT}</p> : null}
+                {isDevToolsUiEnabled() ? <p className={styles.devHint}>{LICENSE_DEV_HINT}</p> : null}
             </div>
             <DialogActions>
                 <Button variant="primary" onClick={() => void submit()} disabled={loading}>

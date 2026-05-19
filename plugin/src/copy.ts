@@ -2,7 +2,7 @@
 
 export const PLUGIN_TITLE = "Stream Bunny"
 
-export const PLUGIN_VERSION = "v1.4.1"
+export const PLUGIN_VERSION = "v1.4.2"
 
 /** Dashboard (Paper alignment) */
 export const DASHBOARD_PAPER_HERO_TITLE = "Bunny Stream (HLS) into your Canva"
@@ -238,10 +238,10 @@ export const HELP_ROW_OSS_SUB = "Star, fork, contribute on GitHub"
 
 export const HELP_STATUS_OK = "All systems operational"
 
-export const HELP_STATUS_VERSION = "v1.4.1 · status"
+export const HELP_STATUS_VERSION = "v1.4.2 · status"
 
 /** Latest update card */
-export const LATEST_UPDATE_VERSION = "v1.4.1"
+export const LATEST_UPDATE_VERSION = "v1.4.2"
 
 export const LATEST_UPDATE_TITLE = "Quality picker respects HLS levels"
 

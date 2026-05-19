@@ -34,8 +34,9 @@ npm run pack
 
 Produces `plugin.zip`. Before packing:
 
-- [ ] `package.json` version matches `PLUGIN_VERSION` in `src/copy.ts`
-- [ ] [CHANGELOG.md](../CHANGELOG.md) updated
+- [ ] [`CHANGELOG.md`](../CHANGELOG.md) has a new semver entry for this release
+- [ ] `package.json` version matches `PLUGIN_VERSION` in `src/copy.ts` (and root `package.json`)
+- [ ] Dashboard / Help version strings in `copy.ts` updated if the release is user-visible
 - [ ] All `VITE_SB_MODULE_*` set; embed mode **off**
 - [ ] Optional: `VITE_DOCS_URL`, `VITE_CHANGELOG_URL` for Help links ([docs/framer-plugin-checklist.md](../docs/framer-plugin-checklist.md))
 

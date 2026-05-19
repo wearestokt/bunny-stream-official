@@ -2,7 +2,7 @@
 
 export const PLUGIN_TITLE = "Stream Bunny"
 
-export const PLUGIN_VERSION = "v1.4.0"
+export const PLUGIN_VERSION = "v1.4.1"
 
 /** Dashboard (Paper alignment) */
 export const DASHBOARD_PAPER_HERO_TITLE = "Bunny Stream (HLS) into your Canva"
@@ -14,12 +14,12 @@ export const DASHBOARD_PAPER_LEARN_MORE = "Learn more"
 
 export const WHATS_NEW_LABEL = "WHAT'S NEW · MAY 5"
 
-export const WHATS_NEW_VERSION = "v1.4.0"
+export const WHATS_NEW_VERSION = "v1.4.1"
 
-export const WHATS_NEW_TITLE = "Quality Picker for HLS streams"
+export const WHATS_NEW_TITLE = "SB - Basic template ships"
 
 export const WHATS_NEW_BODY =
-    "Drop it beside any Player so viewers can switch HLS rendition. Pro add-on."
+    "Drop a starter player layout on canvas. Five more templates are coming soon."
 
 /** Differentiator vs generic embed players: adaptive HLS via Bunny CDN. */
 export const PLUGIN_SUBTITLE = "HLS streaming components for Framer"
@@ -238,10 +238,10 @@ export const HELP_ROW_OSS_SUB = "Star, fork, contribute on GitHub"
 
 export const HELP_STATUS_OK = "All systems operational"
 
-export const HELP_STATUS_VERSION = "v1.4.0 · status"
+export const HELP_STATUS_VERSION = "v1.4.1 · status"
 
 /** Latest update card */
-export const LATEST_UPDATE_VERSION = "v1.4.0"
+export const LATEST_UPDATE_VERSION = "v1.4.1"
 
 export const LATEST_UPDATE_TITLE = "Quality picker respects HLS levels"
 

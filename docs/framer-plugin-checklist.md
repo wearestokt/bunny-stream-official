@@ -19,7 +19,7 @@ Source: [framer.com/plugin-requirements](https://www.framer.com/plugin-requireme
 
 ## Version and pack
 
-- [ ] `plugin/package.json` version matches `PLUGIN_VERSION` in `plugin/src/copy.ts` (e.g. **1.4.0** / **v1.4.0**)
+- [ ] `plugin/package.json` version matches `PLUGIN_VERSION` in `plugin/src/copy.ts` (e.g. **1.4.1** / **v1.4.1**)
 - [ ] [CHANGELOG.md](../CHANGELOG.md) updated for the release
 - [ ] `npm run pack` in `plugin/` produces `plugin.zip`
 - [ ] Release build has every `VITE_SB_MODULE_*` set — **not** `VITE_STREAM_BUNNY_EMBED_SOURCES=true`

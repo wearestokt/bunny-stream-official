@@ -2,6 +2,14 @@
 
 All notable changes to **Stream Bunny** follow [Semantic Versioning](https://semver.org/).
 
+## [1.4.1] - 2026-05-18
+
+### Changed
+
+- **Templates** — only **SB - Basic** is insertable; Press Reel, Story Tile, Wall Stack, Tutorial Row, and Showcase Strip show **Coming soon** (no Pro lock, no player fallback).
+- **Bunny Stream setup** docs — recommended library settings: High volume delivery, Premium encoding, H.265 + VP9 (H.264 off), JIT encoding disabled, Early play enabled.
+- User docs no longer reference the `marketing/` folder or Bunny Image Carousel.
+
 ## [1.4.0] - 2026-05-18
 
 ### Added
@@ -20,4 +28,5 @@ All notable changes to **Stream Bunny** follow [Semantic Versioning](https://sem
 
 Components and the Framer plugin shipped incrementally before this changelog file. See [GitHub commit history](https://github.com/wearestokt/bunny-stream-official/commits/main) for prior work.
 
+[1.4.1]: https://github.com/wearestokt/bunny-stream-official/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/wearestokt/bunny-stream-official/compare/v1.3.0...v1.4.0

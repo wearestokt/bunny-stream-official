@@ -1,0 +1,29 @@
+---
+description: Bump semver and CHANGELOG on every Stream Bunny release commit
+globs:
+  - CHANGELOG.md
+  - plugin/package.json
+  - plugin/src/copy.ts
+  - package.json
+  - docs/**
+---
+
+# Stream Bunny — release versioning
+
+When committing and pushing **user-facing** plugin, component, or docs changes that ship to users or the Framer Marketplace:
+
+1. **Update [CHANGELOG.md](CHANGELOG.md)** at the repo root with a dated section (`## [x.y.z] - YYYY-MM-DD`) and `Added` / `Changed` / `Fixed` bullets.
+2. **Bump semver** in `plugin/package.json` and root `package.json` (no `v` prefix in JSON).
+3. **Sync [plugin/src/copy.ts](plugin/src/copy.ts)**:
+   - `PLUGIN_VERSION` → `v` + same semver (e.g. `v1.4.1`)
+   - `HELP_STATUS_VERSION`, `LATEST_UPDATE_VERSION`
+   - `WHATS_NEW_VERSION`, `WHATS_NEW_TITLE`, `WHATS_NEW_BODY` when the release should appear on the dashboard
+4. **Include version files in the same commit** as the feature/docs change — do not push release work without a changelog entry.
+
+Semver policy (match marketplace listing):
+
+- **Patch** — fixes, copy polish, docs-only corrections
+- **Minor** — new components, templates, or features (backwards compatible)
+- **Major** — breaking changes (rare; call out in changelog)
+
+Reference: [docs/README.md](docs/README.md) maintainer workflow, [docs/framer-plugin-checklist.md](docs/framer-plugin-checklist.md).

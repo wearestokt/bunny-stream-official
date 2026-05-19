@@ -39,7 +39,12 @@ Activate Pro in the plugin **Account** screen with your Polar license key.
 Keep docs in sync when you change the product:
 
 1. **Component properties** — edit `components/*.tsx`, then run `npm run docs:components` and commit `docs/components.generated.md`.
-2. **Version** — bump `plugin/package.json`, `plugin/src/copy.ts` (`PLUGIN_VERSION`), and root `CHANGELOG.md`.
+2. **Version + changelog (every release commit)** — before you push user-facing plugin or docs changes:
+   - Add a section to root [`CHANGELOG.md`](../CHANGELOG.md) using [semver](https://semver.org/): **patch** for fixes/polish, **minor** for new features, **major** for breaking changes.
+   - Bump `plugin/package.json` `version` (e.g. `1.4.1` — no `v` prefix).
+   - Bump `plugin/src/copy.ts`: `PLUGIN_VERSION` (`v1.4.1`), `HELP_STATUS_VERSION`, `LATEST_UPDATE_VERSION`, and the dashboard **What's new** strings when the release is user-visible.
+   - Bump root `package.json` `version` to match.
+   - Run through [framer-plugin-checklist.md](framer-plugin-checklist.md) before `npm run pack`.
 3. **Pricing / free tier** — update `plugin/src/copy.ts` when tiers or checkout copy change.
 4. **In-plugin copy** — prefer `copy.ts` or link to these docs instead of duplicating long setup text.
 

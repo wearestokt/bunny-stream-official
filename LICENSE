@@ -24,6 +24,4 @@ SOFTWARE.
 
 The Stream Bunny **Framer plugin** binary distributed via the Framer Marketplace
 and Polar is proprietary. Source in `plugin/` is for development; marketplace
-builds are not redistributed except through approved channels. See
-[marketing/marketplace-listing.md](marketing/marketplace-listing.md) for license
-wording shown to buyers.
+builds are not redistributed except through approved channels.

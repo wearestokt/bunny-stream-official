@@ -38,16 +38,14 @@ Set in CI or local release `.env` before `npm run build` / `pack`:
 
 See [plugin/.env.example](../plugin/.env.example).
 
-## Listing copy (marketing)
-
-Cross-check [marketing/marketplace-listing.md](../marketing/marketplace-listing.md):
+## Marketplace listing
 
 - [ ] Name **Stream Bunny**
 - [ ] Free tier: **5 canvas inserts per workspace**
 - [ ] Pro: **$49 once · lifetime updates**
 - [ ] Support: **hello@wearestokt.com**
-- [ ] Repo link present
-- [ ] Assets per [marketplace-assets.md](../marketing/marketplace-assets.md)
+- [ ] Repo link: `https://github.com/wearestokt/bunny-stream-official`
+- [ ] Icon (30×30 SVG), cover image, and 4–8 screenshots match the shipped plugin
 
 ## User documentation
 

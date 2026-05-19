@@ -39,8 +39,8 @@ Activate Pro in the plugin **Account** screen with your Polar license key.
 Keep docs in sync when you change the product:
 
 1. **Component properties** — edit `components/*.tsx`, then run `npm run docs:components` and commit `docs/components.generated.md`.
-2. **Version** — bump `plugin/package.json`, `plugin/src/copy.ts` (`PLUGIN_VERSION`), root `CHANGELOG.md`, and `marketing/README.md` if publishing.
-3. **Pricing / free tier** — update `plugin/src/copy.ts` and `marketing/` together.
+2. **Version** — bump `plugin/package.json`, `plugin/src/copy.ts` (`PLUGIN_VERSION`), and root `CHANGELOG.md`.
+3. **Pricing / free tier** — update `plugin/src/copy.ts` when tiers or checkout copy change.
 4. **In-plugin copy** — prefer `copy.ts` or link to these docs instead of duplicating long setup text.
 
 ## Changelog

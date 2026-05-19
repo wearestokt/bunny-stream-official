@@ -5,7 +5,7 @@ import { Alert } from "@/components/Alert/Alert"
 import { Badge } from "@/components/Badge/Badge"
 import { ScreenHeader } from "@/components/ScreenHeader/ScreenHeader"
 import { LockIcon, PlayIcon } from "@/icons"
-import { BADGE_FREE, BADGE_PRO, TEMPLATES_SCREEN_TITLE } from "@/copy"
+import { BADGE_FREE, BADGE_PRO, TAG_COMING_SOON, TEMPLATES_SCREEN_TITLE } from "@/copy"
 import type { LibraryModuleKey, TemplateModuleKey } from "@/component-modules"
 import { recordTemplateInsert } from "@/lib/entitlement"
 
@@ -18,6 +18,8 @@ type TemplateEntry = {
     sub: string
     /** Templates flagged `pro` are gated for Free users (Pro lock overlay). */
     pro: boolean
+    /** Shown in the grid but not insertable until the upstream template ships. */
+    comingSoon?: boolean
     /**
      * Upstream library export name. When the URL exists in `templateUrlMap`,
      * the card becomes a real `<Draggable>` and inserts that single component.
@@ -53,35 +55,40 @@ const TEMPLATES: TemplateEntry[] = [
         id: "press-reel",
         title: "Press Reel",
         sub: "16:9 · 1080p",
-        pro: true,
+        pro: false,
+        comingSoon: true,
         moduleKey: "BunnyTemplatePressReel",
     },
     {
         id: "story-tile",
         title: "Story Tile",
         sub: "9:16 · vertical",
-        pro: true,
+        pro: false,
+        comingSoon: true,
         moduleKey: "BunnyTemplateStoryTile",
     },
     {
         id: "wall-stack",
         title: "Wall Stack",
         sub: "4:5 · social",
-        pro: true,
+        pro: false,
+        comingSoon: true,
         moduleKey: "BunnyTemplateWallStack",
     },
     {
         id: "tutorial-row",
         title: "Tutorial Row",
         sub: "16:9 · grid",
-        pro: true,
+        pro: false,
+        comingSoon: true,
         moduleKey: "BunnyTemplateTutorialRow",
     },
     {
         id: "showcase-strip",
         title: "Showcase Strip",
         sub: "21:9 · cinematic",
-        pro: true,
+        pro: false,
+        comingSoon: true,
         moduleKey: "BunnyTemplateShowcaseStrip",
     },
 ]
@@ -159,25 +166,32 @@ export function TemplatesScreen({
 
             <div className={styles.grid}>
                 {TEMPLATES.map((entry) => {
-                    const locked = entitlementTier === "free" && entry.pro
-                    /**
-                     * Drag URL resolution order:
-                     *   1. Real upstream template URL (none yet — set via VITE_SB_MODULE_BunnyTemplate*)
-                     *   2. TEMPORARY fallback to BunnyVideoPlayer so drag-and-drop is functional
-                     *      end-to-end while template components are being authored upstream.
-                     *      Replace by publishing the actual template components.
-                     */
-                    const dragUrl =
-                        templateUrlMap[entry.moduleKey] ?? urlMap["BunnyVideoPlayer"]
+                    const comingSoon = entry.comingSoon === true
+                    const locked = !comingSoon && entitlementTier === "free" && entry.pro
+                    const dragUrl = comingSoon
+                        ? undefined
+                        : templateUrlMap[entry.moduleKey]
 
                     const card = (
                         <CardShell
                             locked={locked}
+                            comingSoon={comingSoon}
                             title={entry.title}
                             sub={entry.sub}
                             subAccent={entry.subAccent}
                         />
                     )
+
+                    if (comingSoon) {
+                        return (
+                            <StaticCardButton
+                                key={entry.id}
+                                onActivate={() => framer.notify(TAG_COMING_SOON)}
+                            >
+                                {card}
+                            </StaticCardButton>
+                        )
+                    }
 
                     if (locked) {
                         return (
@@ -206,7 +220,7 @@ export function TemplatesScreen({
                                 role="button"
                                 tabIndex={0}
                                 className={styles.cardBtn}
-                                onClick={() => framer.notify("Template coming soon")}
+                                onClick={() => framer.notify(TAG_COMING_SOON)}
                             >
                                 {card}
                             </div>
@@ -260,19 +274,50 @@ export function TemplatesScreen({
     )
 }
 
+function StaticCardButton({
+    children,
+    onActivate,
+}: {
+    children: React.ReactNode
+    onActivate: () => void
+}) {
+    return (
+        <div
+            role="button"
+            tabIndex={0}
+            className={styles.cardBtn}
+            onClick={onActivate}
+            onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    onActivate()
+                }
+            }}
+        >
+            {children}
+        </div>
+    )
+}
+
 function CardShell({
     locked,
+    comingSoon,
     title,
     sub,
     subAccent,
 }: {
     locked: boolean
+    comingSoon?: boolean
     title: string
     sub: string
     subAccent?: boolean
 }) {
     return (
-        <span className={`${styles.card} ${locked ? styles.locked : ""}`}>
+        <span
+            className={`${styles.card} ${locked ? styles.locked : ""} ${
+                comingSoon ? styles.comingSoon : ""
+            }`}
+        >
             <span className={styles.previewArt}>
                 <PreviewMockup />
             </span>
@@ -294,6 +339,11 @@ function CardShell({
                         <LockIcon />
                         Pro
                     </span>
+                </span>
+            ) : null}
+            {comingSoon ? (
+                <span className={styles.soonOverlay} aria-hidden>
+                    <span className={styles.soonPill}>{TAG_COMING_SOON}</span>
                 </span>
             ) : null}
         </span>

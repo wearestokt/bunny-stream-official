@@ -137,8 +137,19 @@
 
 .locked .previewArt,
 .locked .previewTitle,
-.locked .previewSub {
+.locked .previewSub,
+.comingSoon .previewArt,
+.comingSoon .previewTitle,
+.comingSoon .previewSub {
     opacity: 0.45;
+}
+
+.comingSoon {
+    cursor: default;
+}
+
+.cardBtn:hover .comingSoon {
+    border-color: var(--border-subtle);
 }
 
 .lockOverlay {
@@ -170,4 +181,29 @@
 .lockPill svg {
     width: 14px;
     height: 14px;
+}
+
+.soonOverlay {
+    position: absolute;
+    inset: 0;
+    background: var(--overlay-lock);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.soonPill {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: var(--accent-bg-soft);
+    border: 1px solid var(--accent-border-soft);
+    color: var(--accent);
+    font-family: var(--font-family);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: 0.02em;
 }

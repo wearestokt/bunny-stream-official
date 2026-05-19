@@ -162,7 +162,7 @@ export const TOAST_UNDO = "Undo"
 /** Templates */
 export const TEMPLATES_SCREEN_TITLE = "Templates"
 
-export const TEMPLATES_SCREEN_SUB = "Drop a fully assembled player. 4 layouts."
+export const TEMPLATES_SCREEN_SUB = "SB - Basic is ready · 5 more layouts coming soon."
 
 export const TEMPLATES_PRO_TITLE = "Templates are a Pro feature"
 

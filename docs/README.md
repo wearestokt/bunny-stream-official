@@ -29,8 +29,8 @@ If you are not using the plugin, follow the short path in the [repository README
 
 | Tier | Canvas inserts | Templates | Quality Picker | Idle Fade override |
 | --- | --- | --- | --- | --- |
-| Free | 5 per workspace | — | — | — |
-| **Stream Bunny Pro** ($49 once · lifetime updates) | Unlimited | All | Yes | Yes |
+| Free | 5 per workspace | SB - Basic | — | — |
+| **Stream Bunny Pro** ($49 once · lifetime updates) | Unlimited | SB - Basic (+ more as they ship) | Yes | Yes |
 
 Activate Pro in the plugin **Account** screen with your Polar license key.
 

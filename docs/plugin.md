@@ -19,7 +19,7 @@ See [plugin/README.md](../plugin/README.md): `npm install`, configure `plugin/.e
 | --- | --- |
 | **Dashboard** | Overview, what’s new, links to docs and tutorial |
 | **Components** | Drag Player, controls, and Pro items onto the canvas |
-| **Templates** | Pre-built layouts (Pro; requires published template module URLs) |
+| **Templates** | **SB - Basic** layout (drag or click to insert); five more layouts marked coming soon |
 | **Quick Start** | Six-step setup (account → tutorial → player → IDs → controls) |
 | **Account** | Free tier usage, **Buy on Polar**, paste license key for Pro |
 | **Help** | Tutorial, documentation, changelog, GitHub, support |
@@ -40,7 +40,7 @@ See [plugin/README.md](../plugin/README.md): `npm install`, configure `plugin/.e
 | --- | --- | --- |
 | Canvas inserts | 5 per workspace | Unlimited |
 | Player + core controls | Yes | Yes |
-| Templates | — | Yes (when module URLs are configured) |
+| Templates | SB - Basic | SB - Basic + future layouts as they ship |
 | BunnyQualityPickerButton | — | Yes |
 | BunnyIdleFade code override | — | Yes |
 

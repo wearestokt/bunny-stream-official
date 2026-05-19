@@ -13,13 +13,27 @@ Sign up (optional affiliate): [bunny.net](https://bunny.net?ref=f9ztcmeo63) → 
 
 Each library has a pull zone / CDN hostname for delivery. Stream Bunny builds URLs from that host plus your video GUID.
 
-## 2. Upload and encode videos
+### Encoding settings (recommended) {#encoding-settings}
 
-1. Open your library → **Upload** (or pull from URL/storage).
-2. Wait until the video status is **Finished** (encoding complete).
-3. For adaptive HLS and the **Quality Picker** (Pro), enable **multiple resolutions** in encoding settings (e.g. 1080p, 720p, 480p, 360p). A single rendition still plays, but viewers cannot switch quality.
+Configure encoding once per **video library** (library settings in the Bunny dashboard) before you upload at scale:
+
+| Setting | Recommended for Stream Bunny |
+| --- | --- |
+| **Delivery tier** | **High volume** tier |
+| **Encoding tier** | **Premium** encoding |
+| **Output codecs** | Enable **H.265 (HEVC)** and **VP9**. **Turn off H.264** if it is selected — Stream Bunny prefers modern codecs and the Quality Picker works best with a clean HEVC/VP9 ladder. |
+| **Quality / resolutions** | Select every rung you need (e.g. 1080p, 720p, 480p, 360p). More renditions = better adaptive HLS and manual quality switching (Pro). |
+| **Just-in-Time encoding** | **Disabled** — videos should be fully encoded before visitors hit your Framer site, so Preview and production playback stay predictable. |
+| **Early play** | **Enabled** — allows playback to start while encoding is still finishing (useful in the dashboard and while iterating in Framer). Still wait until status is **Finished** before you treat a video as production-ready. |
 
 The player uses **hls.js** in browsers without native HLS. When both HEVC and AVC exist for a height, the player prefers **HEVC** on capable devices, then falls back.
+
+## 2. Upload and encode videos
+
+1. Apply the [encoding settings](#encoding-settings) above to your Stream library.
+2. Open your library → **Upload** (or pull from URL/storage).
+3. Wait until the video status is **Finished** (encoding complete).
+4. Confirm multiple resolutions appear on the video if you enabled them in **Quality / resolutions**.
 
 ## 3. Find IDs for Framer {#ids}
 
